@@ -1,13 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { countFichas, createFicha } from "@/lib/db";
+
+// =============================================================================
+// AJUSTAR AQUÍ si el marco guía no calza con la ficha real. Es la proporción
+// ancho:alto de la "Ficha de Contacto Admisión USM" sostenida en vertical.
+// 210:297 = A4. Si la ficha es Carta (US Letter) usa 216:279. Solo importa la
+// razón entre los dos números; los valores absolutos son irrelevantes.
+// =============================================================================
+const FICHA_ASPECT_RATIO = { width: 210, height: 297 } as const;
+
+// Cuánto del contenedor (ancho o alto, lo que limite) ocupa el marco guía.
+// 0.95 = 95% → la ficha se captura cerca y grande, dejando un pequeño borde
+// para los controles (botón de captura, contador).
+const FRAME_FILL = 0.95;
 
 type EstadoCamara = "iniciando" | "lista" | "error";
 
 export default function CameraCapture() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   const [estado, setEstado] = useState<EstadoCamara>("iniciando");
@@ -25,13 +39,14 @@ export default function CameraCapture() {
         if (!navigator.mediaDevices?.getUserMedia) {
           throw new Error("Este navegador no soporta acceso a la cámara.");
         }
-        // Pedimos la cámara trasera y la mayor resolución razonable, para
-        // que el modelo de visión tenga texto nítido en la Fase E.
+        // Pedimos la cámara trasera y la mayor resolución que el dispositivo
+        // pueda entregar; el navegador elige lo más cercano disponible.
+        // Más píxeles = el modelo lee mejor las casillas y letras chicas.
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 4096 },
+            height: { ideal: 2160 },
           },
           audio: false,
         });
@@ -72,27 +87,66 @@ export default function CameraCapture() {
     if (estado !== "lista" || guardando) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    const frameEl = frameRef.current;
+    if (!video || !canvas || !frameEl) return;
 
     setGuardando(true);
     try {
-      const w = video.videoWidth;
-      const h = video.videoHeight;
-      if (w === 0 || h === 0) {
+      const videoW = video.videoWidth;
+      const videoH = video.videoHeight;
+      if (videoW === 0 || videoH === 0) {
         throw new Error("La cámara aún no entrega imagen.");
       }
-      canvas.width = w;
-      canvas.height = h;
+
+      // El <video> usa object-cover: la imagen llena el contenedor y los
+      // bordes que sobran se recortan. Para guardar SOLO lo que está dentro
+      // del marco guía hay que mapear coordenadas de pantalla → píxeles del
+      // video fuente, descontando el escalado y el desplazamiento del cover.
+      const videoRect = video.getBoundingClientRect();
+      const frameRect = frameEl.getBoundingClientRect();
+      const containerW = videoRect.width;
+      const containerH = videoRect.height;
+
+      const scale = Math.max(containerW / videoW, containerH / videoH);
+      const offsetX = (containerW - videoW * scale) / 2;
+      const offsetY = (containerH - videoH * scale) / 2;
+
+      const frameLeftInVideo = frameRect.left - videoRect.left;
+      const frameTopInVideo = frameRect.top - videoRect.top;
+
+      let srcX = (frameLeftInVideo - offsetX) / scale;
+      let srcY = (frameTopInVideo - offsetY) / scale;
+      let srcW = frameRect.width / scale;
+      let srcH = frameRect.height / scale;
+
+      // Por seguridad, recortar contra los bordes reales del frame de video.
+      srcX = Math.max(0, Math.min(videoW, srcX));
+      srcY = Math.max(0, Math.min(videoH, srcY));
+      srcW = Math.max(1, Math.min(videoW - srcX, srcW));
+      srcH = Math.max(1, Math.min(videoH - srcY, srcH));
+
+      canvas.width = Math.round(srcW);
+      canvas.height = Math.round(srcH);
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("No se pudo preparar el lienzo de captura.");
-      ctx.drawImage(video, 0, 0, w, h);
+      ctx.drawImage(
+        video,
+        srcX,
+        srcY,
+        srcW,
+        srcH,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
 
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(
           (b) =>
             b ? resolve(b) : reject(new Error("No se pudo crear la imagen.")),
           "image/jpeg",
-          0.9,
+          0.92,
         );
       });
 
@@ -108,8 +162,24 @@ export default function CameraCapture() {
     }
   }
 
+  // Tamaño máximo del marco manteniendo la proporción de la ficha. Las
+  // unidades cqw/cqh refieren al contenedor con containerType: "size"; el
+  // marco crece hasta tocar el lado más estrecho del contenedor.
+  const fillPct = FRAME_FILL * 100;
+  const ratioWH = `${FICHA_ASPECT_RATIO.width} / ${FICHA_ASPECT_RATIO.height}`;
+  const ratioHW = `${FICHA_ASPECT_RATIO.height} / ${FICHA_ASPECT_RATIO.width}`;
+  const frameStyle: CSSProperties = {
+    width: `min(${fillPct}cqw, calc(${fillPct}cqh * ${ratioWH}))`,
+    height: `min(${fillPct}cqh, calc(${fillPct}cqw * ${ratioHW}))`,
+  };
+
+  const containerStyle: CSSProperties = { containerType: "size" };
+
   return (
-    <div className="relative flex-1 overflow-hidden bg-black">
+    <div
+      className="relative flex-1 overflow-hidden bg-black"
+      style={containerStyle}
+    >
       <video
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-cover"
@@ -121,7 +191,11 @@ export default function CameraCapture() {
       {estado === "lista" && (
         <>
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-[78%] w-[72%] rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]" />
+            <div
+              ref={frameRef}
+              className="rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+              style={frameStyle}
+            />
           </div>
 
           <div className="absolute left-3 top-3 rounded-lg bg-black/70 px-3 py-2 text-white">
