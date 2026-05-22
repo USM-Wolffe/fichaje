@@ -1,13 +1,9 @@
 // Único punto que sabe qué modelo de visión usamos. Corre en el servidor.
 //
-// Estrategia: DOS pasadas a Gemini sobre la misma ficha, en paralelo.
-//   Pasada 1 — imagen completa → campos de línea libre + casillas de selección.
-//   Pasada 2 — recorte AMPLIADO de la zona de casillas de un carácter
-//              → nombre, apellidos, RUT, email, teléfonos.
-// Ambas devuelven JSON; se unen en un único FichaData con la MISMA estructura
+// Enfoque actual: UNA sola pasada a Gemini con la imagen completa de la
+// ficha. La pasada devuelve los 17 campos en un JSON con la MISMA estructura
 // que esperan la API Route y el resto de la app.
 
-import sharp from "sharp";
 import {
   CAMPUS_INTERES_OPTIONS,
   CONOCER_VIAS_ADMISION_OPTIONS,
@@ -20,39 +16,34 @@ import {
   type UsmEsAlternativaOption,
 } from "./fields";
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+// =============================================================================
+// REVERTIR A FLASH: cambia esta constante a "gemini-2.5-flash" (es el único
+// punto que decide el modelo; el resto de la app es agnóstico).
+// =============================================================================
+const GEMINI_MODEL = "gemini-2.5-pro";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-// =============================================================================
-// CALIBRAR AQUÍ si la pasada 2 lee mal. Los valores son fracciones (0-1) del
-// ancho/alto de la imagen YA en orientación landscape (la rotamos antes si
-// vino en portrait). Suponen que la ficha ocupa casi todo el marco — por eso
-// hay que alinearla bien dentro del rectángulo guía de la cámara al capturar.
-//   xStart, yStart → esquina superior izquierda del recorte
-//   xEnd,   yEnd   → esquina inferior derecha
-//   upscale        → veces que se amplía el recorte (2-4 recomendado) para que
-//                    cada casilla llegue al modelo con más píxeles
-// =============================================================================
-const CHARACTER_BOX_CROP = {
-  xStart: 0.16,
-  yStart: 0.17,
-  xEnd: 0.76,
-  yEnd: 0.5,
-  upscale: 3,
-};
+const PROMPT = `Eres un asistente que extrae datos de una ficha de contacto
+en papel del proceso de Admisión de la USM. La ficha está escrita a mano.
+Extrae TODOS los campos siguientes.
 
-// Si la foto viene en portrait (alto > ancho), la rotamos antes de recortar
-// para que CHARACTER_BOX_CROP siempre se aplique sobre una landscape.
-// Cambia el signo si la rotación queda al revés (la ficha sale invertida):
-//   +90 = giro horario      -90 = giro antihorario
-const PORTRAIT_ROTATION_DEGREES = 90;
+DATOS PERSONALES — escritos en CASILLAS DE UN CARÁCTER (una cuadrícula
+donde cada celda alberga EXACTAMENTE UN carácter):
+- nombre, apellidoPaterno, apellidoMaterno
+- rut: 8 dígitos + guion + 1 dígito verificador (o "K"), ej. "12345678-9"
+- email: dirección completa (DEBE contener "@" y un dominio)
+- telefonoFijo: número de teléfono fijo
+- celular: número chileno de 9 dígitos (normalmente empieza por 9)
 
-const PROMPT_PASADA_1 = `Eres un asistente que extrae datos de una ficha de contacto en papel del
-proceso de Admisión de la USM. La ficha está escrita a mano.
+Reglas críticas para casillas de un carácter:
+- Cada CASILLA contiene EXACTAMENTE UN carácter. No combines casillas. No
+  inventes caracteres en casillas vacías.
+- Lee carácter por carácter, casilla por casilla, de izquierda a derecha.
+- Si una casilla está vacía, simplemente NO incluyas un carácter ahí.
+- Letras de nombres y apellidos suelen ser MAYÚSCULAS; email suele ser
+  MINÚSCULAS.
 
-Extrae SOLO estos campos:
-
-LÍNEA LIBRE (texto manuscrito en líneas):
+LÍNEA LIBRE (texto manuscrito sobre líneas, sin casillas):
 establecimiento (colegio), ciudad, promedioNotas, carrera1, carrera2, carrera3.
 
 CASILLAS DE SELECCIÓN (marcadas con cruz/ticket/relleno):
@@ -62,11 +53,14 @@ CASILLAS DE SELECCIÓN (marcadas con cruz/ticket/relleno):
   Vitacura, Concepción, Viña del Mar (JMC)
 - conocerViasAdmision (UNA): Sí, No
 
-NO extraigas: nombre, apellidos, RUT, email, teléfonos (vienen por otra pasada).
 NO extraigas el campo "Fecha".
 
-Devuelve JSON ESTRICTO (sin markdown, sin texto extra) con estas claves:
+Devuelve JSON ESTRICTO (sin markdown, sin texto extra) con EXACTAMENTE estas
+claves:
 {
+  "nombre": string, "apellidoPaterno": string, "apellidoMaterno": string,
+  "rut": string, "email": string,
+  "telefonoFijo": string, "celular": string,
   "establecimiento": string, "ciudad": string, "promedioNotas": string,
   "carrera1": string, "carrera2": string, "carrera3": string,
   "curso": "I"|"II"|"III"|"IV"|"Egresado"|"",
@@ -75,48 +69,27 @@ Devuelve JSON ESTRICTO (sin markdown, sin texto extra) con estas claves:
   "conocerViasAdmision": "si"|"no"|""
 }
 
-Reglas: si un campo no se ve o está vacío, devuelve "" (o [] para
-campusInteres); promedioNotas con coma decimal chilena ("6,2"); campusInteres
-solo incluye los marcados; no agregues claves extra.`;
-
-const PROMPT_PASADA_2 = `Esta imagen es un RECORTE AMPLIADO de una ficha de
-admisión USM. Contiene los datos personales escritos a mano DENTRO DE CASILLAS
-DE UN CARÁCTER: una cuadrícula donde cada celda alberga exactamente UNA letra
-o UN dígito.
-
-INSTRUCCIONES CRÍTICAS:
-- Cada CASILLA contiene EXACTAMENTE UN CARÁCTER. No combines casillas. No
-  inventes caracteres en casillas vacías.
-- Lee carácter por carácter, casilla por casilla, de izquierda a derecha.
-- Si una casilla está vacía, simplemente NO incluyas un carácter en esa posición.
-- Letras de nombres y apellidos suelen ser MAYÚSCULAS; email suele ser
-  MINÚSCULAS.
-
-Lee SOLO estos campos:
-- nombre, apellidoPaterno, apellidoMaterno
-- rut: 8 dígitos numéricos + guion + 1 dígito verificador (o "K"),
-  ej. "12345678-9"
-- email: dirección de correo (DEBE contener "@" y un dominio,
-  ej. "ejemplo@gmail.com")
-- telefonoFijo: número de teléfono fijo
-- celular: número chileno de 9 dígitos (normalmente empieza por 9)
-
-Devuelve JSON ESTRICTO (sin markdown, sin texto extra) con estas claves:
-{
-  "nombre": string, "apellidoPaterno": string, "apellidoMaterno": string,
-  "rut": string, "email": string,
-  "telefonoFijo": string, "celular": string
-}
-
-Reglas: si un campo no se ve, devuelve ""; rut con guion (puntos opcionales);
-telefonoFijo y celular SOLO dígitos, sin espacios ni guiones; email respeta lo
-escrito; no agregues claves extra.`;
+Reglas de formato:
+- Si un campo no se ve o está vacío, devuelve "" (o [] para campusInteres).
+- rut con guion (puntos opcionales).
+- telefonoFijo y celular SOLO dígitos, sin espacios ni guiones.
+- promedioNotas con coma decimal chilena ("6,2").
+- email respeta lo escrito.
+- campusInteres solo incluye los marcados.
+- No agregues claves extra.`;
 
 type GeminiResponse = {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
 };
 
-type Pasada1 = {
+type RawFicha = {
+  nombre: string;
+  apellidoPaterno: string;
+  apellidoMaterno: string;
+  rut: string;
+  email: string;
+  telefonoFijo: string;
+  celular: string;
   establecimiento: string;
   ciudad: string;
   promedioNotas: string;
@@ -129,16 +102,6 @@ type Pasada1 = {
   conocerViasAdmision: ConocerViasAdmisionOption | "";
 };
 
-type Pasada2 = {
-  nombre: string;
-  apellidoPaterno: string;
-  apellidoMaterno: string;
-  rut: string;
-  email: string;
-  telefonoFijo: string;
-  celular: string;
-};
-
 export async function extractFichaData(
   imageBytes: ArrayBuffer,
   mimeType: string,
@@ -148,62 +111,25 @@ export async function extractFichaData(
     throw new Error("Falta GEMINI_API_KEY en el entorno del servidor.");
   }
   const buffer = Buffer.from(imageBytes);
-  const recorte = await cropCharacterBoxes(buffer);
-  const [p1, p2] = await Promise.all([
-    runPasada1(apiKey, buffer, mimeType),
-    runPasada2(apiKey, recorte),
-  ]);
-  return { ...p1, ...p2 };
+  return await runExtraction(apiKey, buffer, mimeType);
 }
 
-async function cropCharacterBoxes(buffer: Buffer): Promise<Buffer> {
-  try {
-    const meta = await sharp(buffer).metadata();
-    const origW = meta.width;
-    const origH = meta.height;
-    if (!origW || !origH) {
-      throw new Error("No se pudo leer el tamaño de la imagen.");
-    }
-    // Tras la rotación condicional ancho y alto se intercambian.
-    const isPortrait = origH > origW;
-    const w = isPortrait ? origH : origW;
-    const h = isPortrait ? origW : origH;
-
-    const left = Math.round(CHARACTER_BOX_CROP.xStart * w);
-    const top = Math.round(CHARACTER_BOX_CROP.yStart * h);
-    const width = Math.max(
-      1,
-      Math.round((CHARACTER_BOX_CROP.xEnd - CHARACTER_BOX_CROP.xStart) * w),
-    );
-    const height = Math.max(
-      1,
-      Math.round((CHARACTER_BOX_CROP.yEnd - CHARACTER_BOX_CROP.yStart) * h),
-    );
-
-    let pipeline = sharp(buffer);
-    if (isPortrait) {
-      pipeline = pipeline.rotate(PORTRAIT_ROTATION_DEGREES);
-    }
-    return await pipeline
-      .extract({ left, top, width, height })
-      .resize({ width: width * CHARACTER_BOX_CROP.upscale })
-      .jpeg({ quality: 92 })
-      .toBuffer();
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`No se pudo recortar la zona de casillas: ${msg}`);
-  }
-}
-
-async function runPasada1(
+async function runExtraction(
   apiKey: string,
   buffer: Buffer,
   mimeType: string,
-): Promise<Pasada1> {
+): Promise<RawFicha> {
   try {
-    const raw = await callGemini(apiKey, PROMPT_PASADA_1, buffer, mimeType);
+    const raw = await callGemini(apiKey, PROMPT, buffer, mimeType);
     const obj = ensureObject(raw);
     return {
+      nombre: textVal(obj.nombre),
+      apellidoPaterno: textVal(obj.apellidoPaterno),
+      apellidoMaterno: textVal(obj.apellidoMaterno),
+      rut: textVal(obj.rut),
+      email: textVal(obj.email),
+      telefonoFijo: textVal(obj.telefonoFijo),
+      celular: textVal(obj.celular),
       establecimiento: textVal(obj.establecimiento),
       ciudad: textVal(obj.ciudad),
       promedioNotas: textVal(obj.promedioNotas),
@@ -226,31 +152,7 @@ async function runPasada1(
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Pasada 1 (campos libres + casillas de selección): ${msg}`);
-  }
-}
-
-async function runPasada2(apiKey: string, croppedBuffer: Buffer): Promise<Pasada2> {
-  try {
-    const raw = await callGemini(
-      apiKey,
-      PROMPT_PASADA_2,
-      croppedBuffer,
-      "image/jpeg",
-    );
-    const obj = ensureObject(raw);
-    return {
-      nombre: textVal(obj.nombre),
-      apellidoPaterno: textVal(obj.apellidoPaterno),
-      apellidoMaterno: textVal(obj.apellidoMaterno),
-      rut: textVal(obj.rut),
-      email: textVal(obj.email),
-      telefonoFijo: textVal(obj.telefonoFijo),
-      celular: textVal(obj.celular),
-    };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(`Pasada 2 (casillas de un carácter): ${msg}`);
+    throw new Error(`Extracción de ficha (pasada única): ${msg}`);
   }
 }
 
