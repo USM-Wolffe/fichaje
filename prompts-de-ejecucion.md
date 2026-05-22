@@ -142,6 +142,57 @@ Cuando termines:
 
 ---
 
+## Prompt de ajuste — Fase E: mejorar la lectura de las casillas
+
+> Úsalo si el modelo lee bien los campos de línea libre pero falla en los campos que
+> están en casillas de un carácter (nombre, apellidos, RUT, email, teléfono, celular).
+
+```
+Lee CLAUDE.md y plan.md completos antes de empezar.
+
+La Fase E ya está construida y funciona, pero hay que mejorarla. El modelo lee bien los
+campos de línea libre (establecimiento, ciudad, carreras) pero se equivoca mucho en los
+campos que están en casillas de un carácter (nombre, apellidos, RUT, email, teléfono,
+celular).
+
+Ajusta SOLO lib/vision.ts. Sigue siendo UN solo modelo (Gemini): no agregues otro
+servicio. El resto de la app no cambia — la API Route y el JSON que devuelve vision.ts
+mantienen exactamente la misma estructura de hoy.
+
+Cambia la extracción a un enfoque de DOS pasadas dentro de vision.ts:
+
+PASADA 1 — sobre la imagen completa de la ficha:
+- Campos de línea libre: establecimiento, ciudad, promedioNotas, carrera1, carrera2,
+  carrera3.
+- Los 4 grupos de casillas de selección: curso, usmEsAlternativa, campusInteres,
+  conocerViasAdmision.
+
+PASADA 2 — sobre un recorte AMPLIADO de la zona de casillas de caracteres:
+- Recorta de la imagen la región donde están los campos en casillas (nombre,
+  apellidoPaterno, apellidoMaterno, rut, email, telefonoFijo, celular) y amplíala
+  (escala 2-3x) antes de enviarla, para que lleguen al modelo con mucha más resolución.
+  Puedes usar una librería de imágenes como "sharp" en el servidor.
+- Define las coordenadas del recorte como una constante claramente marcada al inicio del
+  archivo, fácil de ajustar — habrá que calibrarla contra capturas reales.
+- En el prompt de esta pasada, indícale explícitamente al modelo: estos campos están en
+  casillas de un carácter; debe leer exactamente un carácter por casilla; el RUT son 8
+  dígitos más un dígito verificador; el celular es un número chileno de 9 dígitos; el
+  email es una dirección de correo.
+
+Une los resultados de las dos pasadas en un solo objeto de ficha con la estructura JSON
+que ya se usa hoy. Cada llamada va dentro de try/catch con un mensaje de error claro.
+
+No toques ninguna otra fase ni ningún otro archivo.
+
+Cuando termines:
+1. Verifica que "npm run lint" pasa limpio.
+2. Explícame cómo volver a procesar la ficha que estaba fallando y comparar los campos
+   de casillas antes y después del cambio.
+3. Dime cómo ajustar la constante del recorte si la región no quedó bien encuadrada.
+```
+
+---
+
 ## Prompt — Fase F: Confianza y validación
 
 ```
