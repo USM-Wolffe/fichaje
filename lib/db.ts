@@ -37,6 +37,15 @@ class FichaScanDB extends Dexie {
 
 const db = new FichaScanDB();
 
+// Pedimos persistencia al navegador para que Safari/iOS no descarte el
+// IndexedDB cuando el sitio "no tiene suficiente engagement". Es best-effort:
+// si el navegador no concede el permiso, seguimos funcionando igual.
+if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+  void navigator.storage.persist().catch(() => {
+    // sin persistencia garantizada; nada más que hacer
+  });
+}
+
 export async function createFicha(args: {
   imagen: Blob;
   fechaCaptura?: Date;

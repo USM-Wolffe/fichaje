@@ -124,13 +124,16 @@ export default function CameraCapture() {
             <div className="h-[78%] w-[72%] rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.25)]" />
           </div>
 
-          <div className="absolute left-4 top-4 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
-            Sesión: <span className="font-bold">{capturadasSesion}</span>
-            {totalGuardadas !== null && (
-              <span className="ml-2 text-slate-300">
-                / total {totalGuardadas}
-              </span>
-            )}
+          <div className="absolute left-3 top-3 rounded-lg bg-black/70 px-3 py-2 text-white">
+            <div className="text-[10px] uppercase tracking-wide text-slate-300">
+              Guardadas en total
+            </div>
+            <div className="text-3xl font-bold leading-none">
+              {totalGuardadas ?? "—"}
+            </div>
+            <div className="mt-1 text-[11px] text-emerald-300">
+              +{capturadasSesion} esta sesión
+            </div>
           </div>
 
           <button
