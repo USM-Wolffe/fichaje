@@ -24,13 +24,13 @@ const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // =============================================================================
-// CALIBRAR AQUÍ si la pasada 2 lee mal: ajusta esta región hasta que el recorte
-// contenga SOLO las casillas de un carácter (nombre, apellidos, RUT, email,
-// teléfonos) y nada más. Los valores son fracciones (0-1) del ancho/alto de
-// la imagen original — así funcionan con cualquier resolución de cámara.
+// CALIBRAR AQUÍ si la pasada 2 lee mal. Los valores son fracciones (0-1) del
+// ancho/alto de la imagen YA en orientación landscape (la rotamos antes si
+// vino en portrait). Suponen que la ficha ocupa casi todo el marco — por eso
+// hay que alinearla bien dentro del rectángulo guía de la cámara al capturar.
 //   xStart, yStart → esquina superior izquierda del recorte
 //   xEnd,   yEnd   → esquina inferior derecha
-//   upscale        → veces que se amplía el recorte (2-3 recomendado) para que
+//   upscale        → veces que se amplía el recorte (2-4 recomendado) para que
 //                    cada casilla llegue al modelo con más píxeles
 // =============================================================================
 const CHARACTER_BOX_CROP = {
@@ -40,6 +40,12 @@ const CHARACTER_BOX_CROP = {
   yEnd: 0.5,
   upscale: 3,
 };
+
+// Si la foto viene en portrait (alto > ancho), la rotamos antes de recortar
+// para que CHARACTER_BOX_CROP siempre se aplique sobre una landscape.
+// Cambia el signo si la rotación queda al revés (la ficha sale invertida):
+//   +90 = giro horario      -90 = giro antihorario
+const PORTRAIT_ROTATION_DEGREES = 90;
 
 const PROMPT_PASADA_1 = `Eres un asistente que extrae datos de una ficha de contacto en papel del
 proceso de Admisión de la USM. La ficha está escrita a mano.
@@ -153,11 +159,16 @@ export async function extractFichaData(
 async function cropCharacterBoxes(buffer: Buffer): Promise<Buffer> {
   try {
     const meta = await sharp(buffer).metadata();
-    const w = meta.width;
-    const h = meta.height;
-    if (!w || !h) {
+    const origW = meta.width;
+    const origH = meta.height;
+    if (!origW || !origH) {
       throw new Error("No se pudo leer el tamaño de la imagen.");
     }
+    // Tras la rotación condicional ancho y alto se intercambian.
+    const isPortrait = origH > origW;
+    const w = isPortrait ? origH : origW;
+    const h = isPortrait ? origW : origH;
+
     const left = Math.round(CHARACTER_BOX_CROP.xStart * w);
     const top = Math.round(CHARACTER_BOX_CROP.yStart * h);
     const width = Math.max(
@@ -168,7 +179,12 @@ async function cropCharacterBoxes(buffer: Buffer): Promise<Buffer> {
       1,
       Math.round((CHARACTER_BOX_CROP.yEnd - CHARACTER_BOX_CROP.yStart) * h),
     );
-    return await sharp(buffer)
+
+    let pipeline = sharp(buffer);
+    if (isPortrait) {
+      pipeline = pipeline.rotate(PORTRAIT_ROTATION_DEGREES);
+    }
+    return await pipeline
       .extract({ left, top, width, height })
       .resize({ width: width * CHARACTER_BOX_CROP.upscale })
       .jpeg({ quality: 92 })
