@@ -1,48 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listFichas, type FichaRecord } from "@/lib/db";
+import { listFichas, updateFicha, type FichaRecord } from "@/lib/db";
+import type { FichaData } from "@/lib/fields";
+import FichaListItem from "./FichaListItem";
 
 type FichaConThumb = FichaRecord & { thumbUrl: string };
-
-type EstadoTono = "info" | "ok" | "warn" | "danger";
-
-function describirEstado(f: FichaRecord): { texto: string; tono: EstadoTono } {
-  if (f.estado === "capturada") {
-    return { texto: "Capturada", tono: "info" };
-  }
-  if (f.estado === "error") {
-    return {
-      texto: f.errorMensaje ? "Con error" : "Con error",
-      tono: "danger",
-    };
-  }
-  // procesada
-  const banderas = f.banderas;
-  if (!banderas) {
-    return { texto: "Procesada", tono: "ok" };
-  }
-  let n = 0;
-  for (const v of Object.values(banderas)) {
-    if (v) n++;
-  }
-  if (n === 0) return { texto: "Procesada", tono: "ok" };
-  return {
-    texto: `${n} ${n === 1 ? "celda" : "celdas"} a revisar`,
-    tono: "warn",
-  };
-}
-
-const TONO_CLASSES: Record<EstadoTono, string> = {
-  info: "bg-sky-100 text-sky-800",
-  ok: "bg-emerald-100 text-emerald-800",
-  warn: "bg-amber-100 text-amber-900",
-  danger: "bg-rose-100 text-rose-800",
-};
 
 export default function FichaList() {
   const [fichas, setFichas] = useState<FichaConThumb[] | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
+  // TEMPORAL (Fase E): id de la ficha que se está procesando ahora mismo.
+  // En la Fase G esto se reemplaza por la cola de BatchActions.
+  const [procesandoId, setProcesandoId] = useState<number | null>(null);
   // Guardamos las URLs de la carga anterior para revocarlas cuando llega una
   // nueva carga: si no, cada refresh deja blobs huérfanos en memoria.
   const urlsRef = useRef<string[]>([]);
@@ -69,6 +39,46 @@ export default function FichaList() {
       );
     }
   }, []);
+
+  // TEMPORAL (Fase E): manda la imagen al endpoint y guarda el resultado.
+  // Sirve para verificar la extracción ficha por ficha; la cola real con
+  // checkpoints llega en la Fase G.
+  async function procesarUna(f: FichaConThumb) {
+    if (f.id === undefined || procesandoId !== null) return;
+    setProcesandoId(f.id);
+    try {
+      const formData = new FormData();
+      formData.append("image", f.imagen, `ficha-${f.id}.jpg`);
+      const res = await fetch("/api/extract", {
+        method: "POST",
+        body: formData,
+      });
+      const json: unknown = await res.json();
+      if (!res.ok) {
+        const msg =
+          typeof json === "object" &&
+          json !== null &&
+          "error" in json &&
+          typeof (json as { error: unknown }).error === "string"
+            ? (json as { error: string }).error
+            : `Error ${res.status}`;
+        throw new Error(msg);
+      }
+      if (typeof json !== "object" || json === null || !("datos" in json)) {
+        throw new Error("Respuesta del servidor sin 'datos'.");
+      }
+      const datos = (json as { datos: FichaData }).datos;
+      await updateFicha(f.id, { estado: "procesada", datos });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error al procesar.";
+      if (f.id !== undefined) {
+        await updateFicha(f.id, { estado: "error", errorMensaje: msg });
+      }
+    } finally {
+      setProcesandoId(null);
+      await cargar();
+    }
+  }
 
   useEffect(() => {
     void cargar();
@@ -119,40 +129,19 @@ export default function FichaList() {
 
   return (
     <ul className="divide-y divide-slate-200 border-t border-slate-200">
-      {fichas.map((f) => {
-        const { texto, tono } = describirEstado(f);
-        return (
-          <li
-            key={f.id}
-            className="flex items-center gap-3 bg-white px-4 py-3"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={f.thumbUrl}
-              alt=""
-              className="h-16 w-16 flex-shrink-0 rounded-md border border-slate-200 object-cover"
-            />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-medium text-slate-900">
-                Ficha #{f.id}
-              </div>
-              <div className="text-xs text-slate-500">
-                {f.fechaCaptura.toLocaleString("es-CL", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </div>
-            </div>
-            <span
-              className={`rounded-full px-2 py-1 text-[11px] font-semibold ${TONO_CLASSES[tono]}`}
-            >
-              {texto}
-            </span>
-          </li>
-        );
-      })}
+      {fichas.map((f) => (
+        <FichaListItem
+          key={f.id}
+          ficha={f}
+          thumbUrl={f.thumbUrl}
+          procesandoEsta={procesandoId === f.id}
+          puedeProcesar={
+            (f.estado === "capturada" || f.estado === "error") &&
+            procesandoId === null
+          }
+          onProcesar={() => void procesarUna(f)}
+        />
+      ))}
     </ul>
   );
 }
