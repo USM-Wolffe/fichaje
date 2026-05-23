@@ -40,16 +40,12 @@ interface Props {
   ficha: FichaRecord;
   thumbUrl: string;
   procesandoEsta: boolean;
-  puedeProcesar: boolean;
-  onProcesar: () => void;
 }
 
 export default function FichaListItem({
   ficha,
   thumbUrl,
   procesandoEsta,
-  puedeProcesar,
-  onProcesar,
 }: Props) {
   const [mostrarDatos, setMostrarDatos] = useState(false);
   const { texto, tono } = describirEstado(ficha);
@@ -88,16 +84,6 @@ export default function FichaListItem({
           >
             {procesandoEsta ? "Procesando…" : texto}
           </span>
-          {/* TEMPORAL (Fase E): se reemplaza por BatchActions en la Fase G. */}
-          {puedeProcesar && (
-            <button
-              type="button"
-              onClick={onProcesar}
-              className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
-            >
-              Procesar
-            </button>
-          )}
           {tieneDatos && (
             <button
               type="button"

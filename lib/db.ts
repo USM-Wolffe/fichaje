@@ -67,6 +67,16 @@ export async function listFichas(): Promise<FichaRecord[]> {
   return db.fichas.orderBy("fechaCaptura").toArray();
 }
 
+// La cola de procesamiento (lib/processing.ts) usa este filtro para sacar el
+// lote inicial de cada corrida sin escanear toda la tabla.
+export async function listFichasByEstado(
+  estado: FichaEstado,
+): Promise<FichaRecord[]> {
+  const items = await db.fichas.where("estado").equals(estado).toArray();
+  items.sort((a, b) => a.fechaCaptura.getTime() - b.fechaCaptura.getTime());
+  return items;
+}
+
 export async function countFichas(): Promise<number> {
   return db.fichas.count();
 }

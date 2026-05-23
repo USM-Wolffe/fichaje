@@ -1,4 +1,5 @@
 import Link from "next/link";
+import BatchActions from "@/components/BatchActions";
 import FichaList from "@/components/FichaList";
 
 export default function HomePage() {
@@ -11,13 +12,14 @@ export default function HomePage() {
         </p>
       </header>
 
-      <div className="px-4 py-4">
+      <div className="space-y-3 px-4 py-4">
         <Link
           href="/escanear"
           className="block w-full rounded-lg bg-slate-900 px-4 py-3 text-center text-base font-semibold text-white shadow-sm hover:bg-slate-700"
         >
           Escanear fichas
         </Link>
+        <BatchActions />
       </div>
 
       <section aria-label="Fichas guardadas" className="pb-12">

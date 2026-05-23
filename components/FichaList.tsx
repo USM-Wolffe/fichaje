@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listFichas, updateFicha, type FichaRecord } from "@/lib/db";
-import type { FichaData } from "@/lib/fields";
+import { listFichas, type FichaRecord } from "@/lib/db";
+import { getProgress, subscribe, type Progress } from "@/lib/processing";
 import FichaListItem from "./FichaListItem";
 
 type FichaConThumb = FichaRecord & { thumbUrl: string };
@@ -10,9 +10,7 @@ type FichaConThumb = FichaRecord & { thumbUrl: string };
 export default function FichaList() {
   const [fichas, setFichas] = useState<FichaConThumb[] | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
-  // TEMPORAL (Fase E): id de la ficha que se está procesando ahora mismo.
-  // En la Fase G esto se reemplaza por la cola de BatchActions.
-  const [procesandoId, setProcesandoId] = useState<number | null>(null);
+  const [progress, setProgress] = useState<Progress>(getProgress);
   // Guardamos las URLs de la carga anterior para revocarlas cuando llega una
   // nueva carga: si no, cada refresh deja blobs huérfanos en memoria.
   const urlsRef = useRef<string[]>([]);
@@ -40,46 +38,6 @@ export default function FichaList() {
     }
   }, []);
 
-  // TEMPORAL (Fase E): manda la imagen al endpoint y guarda el resultado.
-  // Sirve para verificar la extracción ficha por ficha; la cola real con
-  // checkpoints llega en la Fase G.
-  async function procesarUna(f: FichaConThumb) {
-    if (f.id === undefined || procesandoId !== null) return;
-    setProcesandoId(f.id);
-    try {
-      const formData = new FormData();
-      formData.append("image", f.imagen, `ficha-${f.id}.jpg`);
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        body: formData,
-      });
-      const json: unknown = await res.json();
-      if (!res.ok) {
-        const msg =
-          typeof json === "object" &&
-          json !== null &&
-          "error" in json &&
-          typeof (json as { error: unknown }).error === "string"
-            ? (json as { error: string }).error
-            : `Error ${res.status}`;
-        throw new Error(msg);
-      }
-      if (typeof json !== "object" || json === null || !("datos" in json)) {
-        throw new Error("Respuesta del servidor sin 'datos'.");
-      }
-      const datos = (json as { datos: FichaData }).datos;
-      await updateFicha(f.id, { estado: "procesada", datos });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Error al procesar.";
-      if (f.id !== undefined) {
-        await updateFicha(f.id, { estado: "error", errorMensaje: msg });
-      }
-    } finally {
-      setProcesandoId(null);
-      await cargar();
-    }
-  }
-
   useEffect(() => {
     void cargar();
     // Cuando el usuario vuelve desde /escanear, el router de Next.js puede
@@ -94,6 +52,24 @@ export default function FichaList() {
       urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       urlsRef.current = [];
     };
+  }, [cargar]);
+
+  // Suscripción al progreso de la cola: cuando una corrida termina, refrescamos
+  // la lista para reflejar los cambios (procesada/error). Durante la corrida
+  // mantenemos el id de la ficha actual para que el badge muestre "Procesando…".
+  // Usamos un ref para conocer el estado previo sin re-suscribirnos en cada
+  // emisión (re-suscribir podría perder eventos del store).
+  const estadoPrevioRef = useRef<Progress["estado"]>(getProgress().estado);
+  useEffect(() => {
+    const unsub = subscribe((p) => {
+      const previo = estadoPrevioRef.current;
+      estadoPrevioRef.current = p.estado;
+      setProgress(p);
+      if (previo === "corriendo" && p.estado === "terminada") {
+        void cargar();
+      }
+    });
+    return unsub;
   }, [cargar]);
 
   if (errorMsg) {
@@ -127,6 +103,8 @@ export default function FichaList() {
     );
   }
 
+  const procesandoId = progress.actual?.id ?? null;
+
   return (
     <ul className="divide-y divide-slate-200 border-t border-slate-200">
       {fichas.map((f) => (
@@ -135,11 +113,6 @@ export default function FichaList() {
           ficha={f}
           thumbUrl={f.thumbUrl}
           procesandoEsta={procesandoId === f.id}
-          puedeProcesar={
-            (f.estado === "capturada" || f.estado === "error") &&
-            procesandoId === null
-          }
-          onProcesar={() => void procesarUna(f)}
         />
       ))}
     </ul>
