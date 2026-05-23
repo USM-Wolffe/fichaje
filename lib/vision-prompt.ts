@@ -11,6 +11,13 @@ export const EXTRACTION_PROMPT = `Eres un asistente que extrae datos de una fich
 en papel del proceso de Admisión de la USM. La ficha está escrita a mano.
 Extrae TODOS los campos siguientes.
 
+REGLA GENERAL — TACHADOS Y CORRECCIONES (aplica a TODOS los campos):
+- Si una palabra, letra o número está TACHADO o RAYADO, IGNORA lo tachado.
+- Si al lado, arriba o debajo del tachado hay una corrección escrita, usá
+  ÚNICAMENTE la corrección.
+- Si lo tachado no tiene reemplazo visible, dejá el campo vacío. NO intentes
+  descifrar lo que está tachado: el usuario lo tachó a propósito.
+
 DATOS PERSONALES — escritos en CASILLAS DE UN CARÁCTER (una cuadrícula
 donde cada celda alberga EXACTAMENTE UN carácter):
 - nombre, apellidoPaterno, apellidoMaterno
@@ -58,6 +65,15 @@ Reglas de formato:
 - rut con guion (puntos opcionales).
 - telefonoFijo y celular SOLO dígitos, sin espacios ni guiones.
 - promedioNotas con coma decimal chilena ("6,2").
-- email respeta lo escrito.
+- email respeta lo escrito, con dos excepciones de reconstrucción de
+  estructura (NUNCA del nombre de usuario):
+  • Si la "@" no se ve clara pero el dominio es reconocible (gmail,
+    hotmail, outlook, yahoo, live, icloud, o un dominio educativo
+    chileno como .cl/.edu), reconstruí la "@" y completá el TLD
+    estándar (gmail.com, hotmail.com, outlook.com, yahoo.com, etc.).
+  • Si el dominio se ve parcialmente pero es inequívoco (por ejemplo
+    "gmai" → "gmail.com", "outloo" → "outlook.com"), complétalo.
+  • NUNCA inventes el nombre de usuario (la parte antes de la "@"). Si
+    no se lee con certeza, dejá email = "".
 - campusInteres solo incluye los marcados.
 - No agregues claves extra.`;

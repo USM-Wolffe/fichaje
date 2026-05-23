@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { listFichasByEstado } from "@/lib/db";
+import { exportarZip } from "@/lib/export";
 import {
   getProgress,
   processAll,
@@ -23,6 +24,9 @@ export default function BatchActions() {
   const [pendientesIniciales, setPendientesIniciales] = useState<number | null>(
     null,
   );
+  const [procesadasCount, setProcesadasCount] = useState<number | null>(null);
+  const [exportando, setExportando] = useState(false);
+  const [errorExport, setErrorExport] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   const refrescarPendientes = useCallback(async () => {
@@ -37,15 +41,44 @@ export default function BatchActions() {
     }
   }, []);
 
+  const refrescarProcesadas = useCallback(async () => {
+    try {
+      const lista = await listFichasByEstado("procesada");
+      setProcesadasCount(lista.length);
+    } catch (e) {
+      setErrorMsg(
+        (e as Error).message || "No se pudo leer el conteo de fichas.",
+      );
+    }
+  }, []);
+
   useEffect(() => {
     void refrescarPendientes();
-  }, [refrescarPendientes]);
+    void refrescarProcesadas();
+  }, [refrescarPendientes, refrescarProcesadas]);
 
   // Tras una corrida, el conteo de pendientes se vuelve a leer (algunas
   // pasaron a "procesada" o "error", y el botón debe reflejar el nuevo total).
   useEffect(() => {
-    if (progress.estado === "terminada") void refrescarPendientes();
-  }, [progress.estado, refrescarPendientes]);
+    if (progress.estado === "terminada") {
+      void refrescarPendientes();
+      void refrescarProcesadas();
+    }
+  }, [progress.estado, refrescarPendientes, refrescarProcesadas]);
+
+  const handleExportar = useCallback(async () => {
+    setExportando(true);
+    setErrorExport("");
+    try {
+      await exportarZip();
+    } catch (e) {
+      setErrorExport(
+        (e as Error).message || "No se pudo exportar el .zip.",
+      );
+    } finally {
+      setExportando(false);
+    }
+  }, []);
 
   if (errorMsg) {
     return (
@@ -70,6 +103,8 @@ export default function BatchActions() {
   const procesarDisabled = corriendo || pendientesParaBoton === 0;
   const reintentarVisible = progress.conError > 0;
   const reintentarDisabled = corriendo;
+  const exportarDisabled =
+    exportando || corriendo || (procesadasCount ?? 0) === 0;
 
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -93,7 +128,23 @@ export default function BatchActions() {
             Reintentar errores ({progress.conError})
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => void handleExportar()}
+          disabled={exportarDisabled}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {exportando
+            ? "Exportando…"
+            : `Exportar Excel + imágenes (${procesadasCount ?? 0})`}
+        </button>
       </div>
+
+      {errorExport && (
+        <div className="rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {errorExport}
+        </div>
+      )}
 
       {(corriendo || progress.estado === "terminada") && (
         <div className="space-y-2">
