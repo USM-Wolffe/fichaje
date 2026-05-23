@@ -21,6 +21,8 @@ interface Props {
   capturadasSesion: number;
   flash: boolean;
   fallbackNotice: string;
+  autoEnabled: boolean;
+  onToggleAuto: () => void;
   onCapturar: () => void;
 }
 
@@ -32,6 +34,8 @@ export default function CaptureControls(props: Props) {
     capturadasSesion,
     flash,
     fallbackNotice,
+    autoEnabled,
+    onToggleAuto,
     onCapturar,
   } = props;
 
@@ -55,6 +59,17 @@ export default function CaptureControls(props: Props) {
           +{capturadasSesion} esta sesión
         </div>
       </div>
+
+      <button
+        type="button"
+        onClick={onToggleAuto}
+        aria-pressed={autoEnabled}
+        className={`absolute right-3 top-3 rounded-full px-3 py-1.5 text-xs font-semibold text-white shadow-md transition ${
+          autoEnabled ? "bg-emerald-600/90" : "bg-black/70 text-slate-200"
+        }`}
+      >
+        {autoEnabled ? "Auto" : "Manual"}
+      </button>
 
       {prepWaiting && (
         <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-sm text-white/90">

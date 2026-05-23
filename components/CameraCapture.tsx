@@ -5,21 +5,17 @@ import { createFicha } from "@/lib/db";
 import type { Scanner } from "@/lib/scanner";
 import OrientationGate from "./OrientationGate";
 import CaptureControls from "./CaptureControls";
+import CameraStatusOverlay from "./CameraStatusOverlay";
 import { useCameraStream } from "./useCameraStream";
+import { useAutoCapture, useAutoCapturePref } from "./useAutoCapture";
 
 const JPEG_QUALITY = 0.92;
 const FALLBACK_NOTICE_MS = 2000;
 const CONTAINER_STYLE: CSSProperties = { containerType: "size" };
 
 export default function CameraCapture() {
-  const {
-    videoRef,
-    estado,
-    errorMsg,
-    setErrorMsg,
-    totalGuardadas,
-    setTotalGuardadas,
-  } = useCameraStream();
+  const { videoRef, estado, errorMsg, setErrorMsg, totalGuardadas, setTotalGuardadas } =
+    useCameraStream();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const scannerRef = useRef<Scanner | null>(null);
@@ -30,6 +26,7 @@ export default function CameraCapture() {
   const [prepWaiting, setPrepWaiting] = useState(true);
   const [scannerError, setScannerError] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState<string>("");
+  const { enabled: autoEnabled, toggle: toggleAuto } = useAutoCapturePref();
 
   // Carga diferida del scanner (OpenCV.js + jscanify). Si falla, caemos al
   // modo Etapa 1: marco guía estático + captura del frame completo.
@@ -54,6 +51,13 @@ export default function CameraCapture() {
     };
   }, []);
 
+  const capturarRef = useRef<() => void>(() => {});
+  const { registerFrame } = useAutoCapture({
+    enabled: autoEnabled,
+    busy: guardando,
+    onFire: () => capturarRef.current(),
+  });
+
   // Loop de detección en vivo. Sólo corre con scanner cargado y cámara lista.
   useEffect(() => {
     if (prepWaiting || scannerError || estado !== "lista") return;
@@ -63,18 +67,20 @@ export default function CameraCapture() {
     if (!scanner || !video || !overlay) return;
     let rafId = 0;
     const tick = () => {
+      let detected = false;
       try {
-        scanner.drawContour(video, overlay);
+        detected = scanner.drawContour(video, overlay);
       } catch {
         // un frame fallido no debe matar el loop
       }
+      registerFrame(detected);
       rafId = window.requestAnimationFrame(tick);
     };
     rafId = window.requestAnimationFrame(tick);
     return () => {
       window.cancelAnimationFrame(rafId);
     };
-  }, [estado, prepWaiting, scannerError, videoRef]);
+  }, [estado, prepWaiting, scannerError, videoRef, registerFrame]);
 
   async function capturar() {
     if (estado !== "lista" || guardando || prepWaiting) return;
@@ -133,6 +139,7 @@ export default function CameraCapture() {
       setGuardando(false);
     }
   }
+  capturarRef.current = capturar;
 
   return (
     <div
@@ -162,28 +169,13 @@ export default function CameraCapture() {
           capturadasSesion={capturadasSesion}
           flash={flash}
           fallbackNotice={fallbackNotice}
+          autoEnabled={autoEnabled}
+          onToggleAuto={toggleAuto}
           onCapturar={capturar}
         />
       )}
 
-      {estado === "iniciando" && (
-        <div className="absolute inset-0 flex items-center justify-center text-sm text-white">
-          Abriendo la cámara…
-        </div>
-      )}
-
-      {estado === "error" && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 px-6 text-center text-white">
-          <p className="mb-2 text-base font-semibold">
-            No se pudo abrir la cámara
-          </p>
-          <p className="text-sm text-slate-300">{errorMsg}</p>
-          <p className="mt-3 text-xs text-slate-400">
-            Verifica los permisos del navegador y que el sitio se cargue por
-            HTTPS.
-          </p>
-        </div>
-      )}
+      <CameraStatusOverlay estado={estado} errorMsg={errorMsg} />
 
       {errorMsg && estado === "lista" && (
         <div className="absolute bottom-36 left-1/2 max-w-[90%] -translate-x-1/2 rounded bg-rose-900/90 px-3 py-2 text-center text-xs text-white">
