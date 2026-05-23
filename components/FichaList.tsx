@@ -104,6 +104,7 @@ export default function FichaList() {
   }
 
   const procesandoId = progress.actual?.id ?? null;
+  const swipeDeshabilitado = progress.estado === "corriendo";
 
   return (
     <ul className="divide-y divide-slate-200 border-t border-slate-200">
@@ -113,6 +114,8 @@ export default function FichaList() {
           ficha={f}
           thumbUrl={f.thumbUrl}
           procesandoEsta={procesandoId === f.id}
+          swipeDeshabilitado={swipeDeshabilitado}
+          onEliminada={() => void cargar()}
         />
       ))}
     </ul>
