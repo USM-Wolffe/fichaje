@@ -44,11 +44,11 @@ export function useAutoCapturePref(): {
   return { enabled, toggle };
 }
 
-// Cuántos frames consecutivos con detección válida hace falta antes de
-// disparar. A ~30 fps, 15 frames ≈ 500 ms — suficiente para descartar
-// "pasé la cámara por encima de una ficha sin querer" y corto para no
-// frustrar al usuario que ya alineó.
-const STABLE_FRAMES_NEEDED = 15;
+// Cuánto tiempo continuo de detección hace falta antes de disparar. Es
+// por reloj (no por frames) porque la latencia de OpenCV en móvil hace
+// que la tasa real del loop varíe mucho. 350 ms basta para descartar
+// "pasé la cámara por encima" y no frustra al usuario que ya alineó.
+const STABLE_MS_NEEDED = 350;
 
 // Bloqueo entre auto-disparos. Da tiempo a procesar la captura (flash
 // blanco + IndexedDB) y a que el usuario cambie la ficha física.
@@ -68,30 +68,29 @@ interface Result {
 // cuándo llamar `onFire`. Sin DOM, sin refs externos, sin lógica de cámara.
 export function useAutoCapture(opts: Options): Result {
   const { enabled, busy, onFire } = opts;
-  const stableFramesRef = useRef(0);
+  const detectionStartRef = useRef(0);
   const cooldownUntilRef = useRef(0);
   const onFireRef = useRef(onFire);
   onFireRef.current = onFire;
 
   const registerFrame = useCallback(
     (detected: boolean) => {
-      if (!enabled || busy) {
-        stableFramesRef.current = 0;
-        return;
-      }
-      if (!detected) {
-        stableFramesRef.current = 0;
+      if (!enabled || busy || !detected) {
+        detectionStartRef.current = 0;
         return;
       }
       const now = Date.now();
       if (now < cooldownUntilRef.current) {
         // En cooldown: no acumular para que cuando termine no dispare al primer frame.
-        stableFramesRef.current = 0;
+        detectionStartRef.current = 0;
         return;
       }
-      stableFramesRef.current += 1;
-      if (stableFramesRef.current >= STABLE_FRAMES_NEEDED) {
-        stableFramesRef.current = 0;
+      if (detectionStartRef.current === 0) {
+        detectionStartRef.current = now;
+        return;
+      }
+      if (now - detectionStartRef.current >= STABLE_MS_NEEDED) {
+        detectionStartRef.current = 0;
         cooldownUntilRef.current = now + COOLDOWN_MS;
         onFireRef.current();
       }

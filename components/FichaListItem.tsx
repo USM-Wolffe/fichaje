@@ -76,26 +76,27 @@ export default function FichaListItem({
   }
 
   return (
-    <li ref={liRef} className="relative overflow-hidden bg-white">
-      <div className="absolute inset-y-0 right-0 flex items-stretch">
-        <button
-          type="button"
-          onClick={() => void confirmarEliminar()}
-          disabled={swipeOff}
-          className="w-24 bg-rose-600 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+    <li ref={liRef} className="bg-white">
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-y-0 right-0 flex items-stretch">
+          <button
+            type="button"
+            onClick={() => void confirmarEliminar()}
+            disabled={swipeOff}
+            className="w-24 bg-rose-600 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Eliminar
+          </button>
+        </div>
+        <div
+          {...swipe.bindings}
+          style={{
+            transform: `translateX(${swipe.dx}px)`,
+            transition: swipe.arrastrando ? "none" : "transform 180ms ease-out",
+            touchAction: "pan-y",
+          }}
+          className="flex items-center gap-3 bg-white px-4 py-3"
         >
-          Eliminar
-        </button>
-      </div>
-      <div
-        {...swipe.bindings}
-        style={{
-          transform: `translateX(${swipe.dx}px)`,
-          transition: swipe.arrastrando ? "none" : "transform 180ms ease-out",
-          touchAction: "pan-y",
-        }}
-        className="flex items-center gap-3 bg-white px-4 py-3"
-      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={thumbUrl}
@@ -141,6 +142,7 @@ export default function FichaListItem({
               {mostrarDatos ? "Ocultar" : "Ver datos"}
             </button>
           )}
+        </div>
         </div>
       </div>
       {mostrarDatos && ficha.datos && <FichaDataView datos={ficha.datos} />}
