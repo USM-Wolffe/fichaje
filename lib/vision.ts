@@ -17,10 +17,11 @@ import {
 } from "./fields";
 
 // =============================================================================
-// REVERTIR A FLASH: cambia esta constante a "gemini-2.5-flash" (es el único
-// punto que decide el modelo; el resto de la app es agnóstico).
+// Modelo de visión. Único punto que decide cuál se usa; el resto es agnóstico.
+// Probar a "gemini-2.5-pro" si Flash empieza a fallar mucho sobre imágenes
+// limpias (después de la Etapa 2 de plan-captura.md).
 // =============================================================================
-const GEMINI_MODEL = "gemini-2.5-pro";
+const GEMINI_MODEL = "gemini-2.5-flash";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const PROMPT = `Eres un asistente que extrae datos de una ficha de contacto
