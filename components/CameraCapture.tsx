@@ -1,109 +1,83 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { countFichas, createFicha } from "@/lib/db";
+import { createFicha } from "@/lib/db";
+import type { Scanner } from "@/lib/scanner";
+import OrientationGate from "./OrientationGate";
+import CaptureControls from "./CaptureControls";
+import { useCameraStream } from "./useCameraStream";
 
-// =============================================================================
-// Proporción ancho:alto de la "Ficha de Contacto Admisión USM" en horizontal
-// (21 × 14 cm → razón 3:2). Solo importa la razón entre los dos números.
-// El marco es SOLO una ayuda visual de alineación: NO recorta la captura.
-// La foto guardada es siempre el frame completo del video.
-// =============================================================================
-const FICHA_ASPECT_RATIO = { width: 210, height: 140 } as const;
-
-// Cuánto del contenedor (ancho o alto, lo que limite) ocupa el marco guía.
-// 0.95 = 95% → la ficha se captura cerca y grande, dejando un pequeño borde
-// para los controles (botón de captura, contador).
-const FRAME_FILL = 0.95;
-
-type EstadoCamara = "iniciando" | "lista" | "error";
+const JPEG_QUALITY = 0.92;
+const FALLBACK_NOTICE_MS = 2000;
+const CONTAINER_STYLE: CSSProperties = { containerType: "size" };
 
 export default function CameraCapture() {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const {
+    videoRef,
+    estado,
+    errorMsg,
+    setErrorMsg,
+    totalGuardadas,
+    setTotalGuardadas,
+  } = useCameraStream();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameRef = useRef<HTMLDivElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const scannerRef = useRef<Scanner | null>(null);
 
-  const [estado, setEstado] = useState<EstadoCamara>("iniciando");
-  const [errorMsg, setErrorMsg] = useState<string>("");
   const [capturadasSesion, setCapturadasSesion] = useState(0);
-  const [totalGuardadas, setTotalGuardadas] = useState<number | null>(null);
   const [guardando, setGuardando] = useState(false);
   const [flash, setFlash] = useState(false);
-  // Default true para no parpadear el overlay durante el primer render.
-  const [esHorizontal, setEsHorizontal] = useState(true);
+  const [prepWaiting, setPrepWaiting] = useState(true);
+  const [scannerError, setScannerError] = useState(false);
+  const [fallbackNotice, setFallbackNotice] = useState<string>("");
 
-  useEffect(() => {
-    const mq = window.matchMedia("(orientation: landscape)");
-    const actualizar = () => setEsHorizontal(mq.matches);
-    actualizar();
-    mq.addEventListener("change", actualizar);
-    // Best-effort en Android Chrome (fullscreen / PWA instalada). En iOS
-    // Safari falla silencioso y el overlay de "girar el celular" hace de
-    // respaldo para que el usuario rote a mano.
-    const so = window.screen.orientation as ScreenOrientation & {
-      lock?: (orientation: string) => Promise<void>;
-    };
-    so.lock?.("landscape").catch(() => {});
-    return () => {
-      mq.removeEventListener("change", actualizar);
-    };
-  }, []);
-
+  // Carga diferida del scanner (OpenCV.js + jscanify). Si falla, caemos al
+  // modo Etapa 1: marco guía estático + captura del frame completo.
   useEffect(() => {
     let cancelado = false;
-
-    async function iniciar() {
+    async function cargar() {
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Este navegador no soporta acceso a la cámara.");
-        }
-        // Pedimos la cámara trasera y la mayor resolución que el dispositivo
-        // pueda entregar; el navegador elige lo más cercano disponible.
-        // Más píxeles = el modelo lee mejor las casillas y letras chicas.
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 4096 },
-            height: { ideal: 2160 },
-          },
-          audio: false,
-        });
-        if (cancelado) {
-          stream.getTracks().forEach((t) => t.stop());
-          return;
-        }
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (video) {
-          video.srcObject = stream;
-          await video.play();
-        }
-        const total = await countFichas();
+        const mod = await import("@/lib/scanner");
+        const scanner = await mod.loadScanner();
         if (cancelado) return;
-        setTotalGuardadas(total);
-        setEstado("lista");
-      } catch (e) {
+        scannerRef.current = scanner;
+      } catch {
         if (cancelado) return;
-        const msg =
-          (e as Error).message ||
-          "No se pudo abrir la cámara. Revisa los permisos.";
-        setErrorMsg(msg);
-        setEstado("error");
+        setScannerError(true);
+      } finally {
+        if (!cancelado) setPrepWaiting(false);
       }
     }
-
-    iniciar();
-
+    cargar();
     return () => {
       cancelado = true;
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
     };
   }, []);
 
+  // Loop de detección en vivo. Sólo corre con scanner cargado y cámara lista.
+  useEffect(() => {
+    if (prepWaiting || scannerError || estado !== "lista") return;
+    const scanner = scannerRef.current;
+    const video = videoRef.current;
+    const overlay = overlayRef.current;
+    if (!scanner || !video || !overlay) return;
+    let rafId = 0;
+    const tick = () => {
+      try {
+        scanner.drawContour(video, overlay);
+      } catch {
+        // un frame fallido no debe matar el loop
+      }
+      rafId = window.requestAnimationFrame(tick);
+    };
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [estado, prepWaiting, scannerError, videoRef]);
+
   async function capturar() {
-    if (estado !== "lista" || guardando) return;
+    if (estado !== "lista" || guardando || prepWaiting) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
@@ -116,29 +90,43 @@ export default function CameraCapture() {
         throw new Error("La cámara aún no entrega imagen.");
       }
 
-      // Guardar el frame completo del video, sin recortar al marco guía.
-      // El marco es solo una ayuda visual de alineación; el modelo recibe la
-      // mayor resolución que el dispositivo entregue.
-      canvas.width = videoW;
-      canvas.height = videoH;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("No se pudo preparar el lienzo de captura.");
-      ctx.drawImage(video, 0, 0, videoW, videoH);
+      let blob: Blob | null = null;
+      let fallback = false;
+      const scanner = scannerRef.current;
+      if (scanner && !scannerError) {
+        try {
+          blob = await scanner.extractFicha(video);
+        } catch {
+          blob = null;
+        }
+        if (!blob) fallback = true;
+      }
 
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(
-          (b) =>
-            b ? resolve(b) : reject(new Error("No se pudo crear la imagen.")),
-          "image/jpeg",
-          0.92,
-        );
-      });
+      if (!blob) {
+        canvas.width = videoW;
+        canvas.height = videoH;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("No se pudo preparar el lienzo de captura.");
+        ctx.drawImage(video, 0, 0, videoW, videoH);
+        blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob(
+            (b) =>
+              b ? resolve(b) : reject(new Error("No se pudo crear la imagen.")),
+            "image/jpeg",
+            JPEG_QUALITY,
+          );
+        });
+      }
 
       await createFicha({ imagen: blob });
       setCapturadasSesion((n) => n + 1);
       setTotalGuardadas((n) => (n ?? 0) + 1);
       setFlash(true);
       window.setTimeout(() => setFlash(false), 120);
+      if (fallback) {
+        setFallbackNotice("Ficha sin detectar — se guardó la foto completa.");
+        window.setTimeout(() => setFallbackNotice(""), FALLBACK_NOTICE_MS);
+      }
     } catch (e) {
       setErrorMsg((e as Error).message || "Error al guardar la ficha.");
     } finally {
@@ -146,23 +134,10 @@ export default function CameraCapture() {
     }
   }
 
-  // Tamaño máximo del marco manteniendo la proporción de la ficha. Las
-  // unidades cqw/cqh refieren al contenedor con containerType: "size"; el
-  // marco crece hasta tocar el lado más estrecho del contenedor.
-  const fillPct = FRAME_FILL * 100;
-  const ratioWH = `${FICHA_ASPECT_RATIO.width} / ${FICHA_ASPECT_RATIO.height}`;
-  const ratioHW = `${FICHA_ASPECT_RATIO.height} / ${FICHA_ASPECT_RATIO.width}`;
-  const frameStyle: CSSProperties = {
-    width: `min(${fillPct}cqw, calc(${fillPct}cqh * ${ratioWH}))`,
-    height: `min(${fillPct}cqh, calc(${fillPct}cqw * ${ratioHW}))`,
-  };
-
-  const containerStyle: CSSProperties = { containerType: "size" };
-
   return (
     <div
       className="relative flex-1 overflow-hidden bg-black"
-      style={containerStyle}
+      style={CONTAINER_STYLE}
     >
       <video
         ref={videoRef}
@@ -171,68 +146,25 @@ export default function CameraCapture() {
         muted
       />
       <canvas ref={canvasRef} className="hidden" />
+      <canvas
+        ref={overlayRef}
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+        style={{ display: scannerError || prepWaiting ? "none" : undefined }}
+      />
 
-      {!esHorizontal && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black/95 px-6 text-center text-white">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            className="h-14 w-14 text-slate-300"
-            aria-hidden="true"
-          >
-            <rect x="3" y="6" width="18" height="12" rx="2" />
-            <path
-              strokeLinecap="round"
-              d="M8 21l3-3M16 21l-3-3"
-            />
-          </svg>
-          <p className="text-base font-semibold">
-            Gira el celular a horizontal
-          </p>
-          <p className="max-w-xs text-sm text-slate-400">
-            La pantalla de escaneo se usa con el celular apaisado y la ficha
-            horizontal sobre la mesa.
-          </p>
-        </div>
-      )}
+      <OrientationGate />
 
       {estado === "lista" && (
-        <>
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div
-              ref={frameRef}
-              className="rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
-              style={frameStyle}
-            />
-          </div>
-
-          <div className="absolute left-3 top-3 rounded-lg bg-black/70 px-3 py-2 text-white">
-            <div className="text-[10px] uppercase tracking-wide text-slate-300">
-              Guardadas en total
-            </div>
-            <div className="text-3xl font-bold leading-none">
-              {totalGuardadas ?? "—"}
-            </div>
-            <div className="mt-1 text-[11px] text-emerald-300">
-              +{capturadasSesion} esta sesión
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={capturar}
-            disabled={guardando}
-            aria-label="Capturar ficha"
-            className="absolute bottom-10 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full border-4 border-white bg-white/95 shadow-lg active:scale-95 disabled:opacity-50"
-          />
-
-          {flash && (
-            <div className="pointer-events-none absolute inset-0 bg-white opacity-60" />
-          )}
-        </>
+        <CaptureControls
+          scannerError={scannerError}
+          prepWaiting={prepWaiting}
+          guardando={guardando}
+          totalGuardadas={totalGuardadas}
+          capturadasSesion={capturadasSesion}
+          flash={flash}
+          fallbackNotice={fallbackNotice}
+          onCapturar={capturar}
+        />
       )}
 
       {estado === "iniciando" && (
