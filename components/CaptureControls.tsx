@@ -77,13 +77,15 @@ export default function CaptureControls(props: Props) {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={onCapturar}
-        disabled={guardando || prepWaiting}
-        aria-label="Capturar ficha"
-        className="absolute bottom-10 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full border-4 border-white bg-white/95 shadow-lg active:scale-95 disabled:opacity-50"
-      />
+      {!autoEnabled && (
+        <button
+          type="button"
+          onClick={onCapturar}
+          disabled={guardando || prepWaiting}
+          aria-label="Capturar ficha"
+          className="absolute bottom-10 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full border-4 border-white bg-white/95 shadow-lg active:scale-95 disabled:opacity-50"
+        />
+      )}
 
       {flash && (
         <div className="pointer-events-none absolute inset-0 bg-white opacity-60" />
