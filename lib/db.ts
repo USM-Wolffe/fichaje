@@ -5,7 +5,7 @@
 import Dexie, { type Table } from "dexie";
 import { ALL_FIELDS, type FichaData, type FieldKey } from "./fields";
 
-export type FichaEstado = "capturada" | "procesada" | "error";
+export type FichaEstado = "capturada" | "procesada" | "error" | "exportada";
 
 // Una bandera `true` significa "celda dudosa" (el modelo no estaba seguro o
 // una regla de validación falló). Se usará en el Excel para resaltar.

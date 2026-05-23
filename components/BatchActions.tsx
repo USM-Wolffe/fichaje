@@ -7,7 +7,6 @@
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { listFichasByEstado } from "@/lib/db";
-import { exportarZip } from "@/lib/export";
 import {
   getProgress,
   processAll,
@@ -25,14 +24,21 @@ export default function BatchActions() {
     null,
   );
   const [procesadasCount, setProcesadasCount] = useState<number | null>(null);
+  const [exportadasCount, setExportadasCount] = useState<number | null>(null);
   const [exportando, setExportando] = useState(false);
   const [errorExport, setErrorExport] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
-  const refrescarPendientes = useCallback(async () => {
+  const refrescarConteos = useCallback(async () => {
     try {
-      const lista = await listFichasByEstado("capturada");
-      setPendientesIniciales(lista.length);
+      const [capturadas, procesadas, exportadas] = await Promise.all([
+        listFichasByEstado("capturada"),
+        listFichasByEstado("procesada"),
+        listFichasByEstado("exportada"),
+      ]);
+      setPendientesIniciales(capturadas.length);
+      setProcesadasCount(procesadas.length);
+      setExportadasCount(exportadas.length);
       setErrorMsg("");
     } catch (e) {
       setErrorMsg(
@@ -41,36 +47,21 @@ export default function BatchActions() {
     }
   }, []);
 
-  const refrescarProcesadas = useCallback(async () => {
-    try {
-      const lista = await listFichasByEstado("procesada");
-      setProcesadasCount(lista.length);
-    } catch (e) {
-      setErrorMsg(
-        (e as Error).message || "No se pudo leer el conteo de fichas.",
-      );
-    }
-  }, []);
+  useEffect(() => {
+    void refrescarConteos();
+  }, [refrescarConteos]);
 
   useEffect(() => {
-    void refrescarPendientes();
-    void refrescarProcesadas();
-  }, [refrescarPendientes, refrescarProcesadas]);
+    if (progress.estado === "terminada") void refrescarConteos();
+  }, [progress.estado, refrescarConteos]);
 
-  // Tras una corrida, el conteo de pendientes se vuelve a leer (algunas
-  // pasaron a "procesada" o "error", y el botón debe reflejar el nuevo total).
-  useEffect(() => {
-    if (progress.estado === "terminada") {
-      void refrescarPendientes();
-      void refrescarProcesadas();
-    }
-  }, [progress.estado, refrescarPendientes, refrescarProcesadas]);
-
-  const handleExportar = useCallback(async () => {
+  const handleExportar = useCallback(async (modo?: "nuevas" | "todas") => {
     setExportando(true);
     setErrorExport("");
     try {
-      await exportarZip();
+      const { exportarZip } = await import("@/lib/export");
+      await exportarZip({ modo: modo ?? "nuevas" });
+      await refrescarConteos();
     } catch (e) {
       setErrorExport(
         (e as Error).message || "No se pudo exportar el .zip.",
@@ -78,7 +69,7 @@ export default function BatchActions() {
     } finally {
       setExportando(false);
     }
-  }, []);
+  }, [refrescarConteos]);
 
   if (errorMsg) {
     return (
@@ -105,6 +96,9 @@ export default function BatchActions() {
   const reintentarDisabled = corriendo;
   const exportarDisabled =
     exportando || corriendo || (procesadasCount ?? 0) === 0;
+  const reexportarVisible = (exportadasCount ?? 0) > 0;
+  const reexportarDisabled = exportando || corriendo;
+  const totalReexportar = (procesadasCount ?? 0) + (exportadasCount ?? 0);
 
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -130,7 +124,7 @@ export default function BatchActions() {
         )}
         <button
           type="button"
-          onClick={() => void handleExportar()}
+          onClick={() => void handleExportar("nuevas")}
           disabled={exportarDisabled}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -138,6 +132,16 @@ export default function BatchActions() {
             ? "Exportando…"
             : `Exportar Excel + imágenes (${procesadasCount ?? 0})`}
         </button>
+        {reexportarVisible && (
+          <button
+            type="button"
+            onClick={() => void handleExportar("todas")}
+            disabled={reexportarDisabled}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Re-exportar todas ({totalReexportar})
+          </button>
+        )}
       </div>
 
       {errorExport && (

@@ -5,7 +5,7 @@ import { deleteFicha, type FichaRecord } from "@/lib/db";
 import { useSwipeToReveal } from "@/lib/hooks/use-swipe-to-reveal";
 import FichaDataView from "./FichaDataView";
 
-type EstadoTono = "info" | "ok" | "warn" | "danger";
+type EstadoTono = "info" | "ok" | "warn" | "danger" | "neutral";
 
 const REVEAL_WIDTH = 96;
 const REVEAL_THRESHOLD = 80;
@@ -14,6 +14,7 @@ const DIRECTION_LOCK_PX = 8;
 function describirEstado(f: FichaRecord): { texto: string; tono: EstadoTono } {
   if (f.estado === "capturada") return { texto: "Capturada", tono: "info" };
   if (f.estado === "error") return { texto: "Con error", tono: "danger" };
+  if (f.estado === "exportada") return { texto: "Exportada", tono: "neutral" };
   const banderas = f.banderas;
   if (!banderas) return { texto: "Procesada", tono: "ok" };
   let n = 0;
@@ -30,6 +31,7 @@ const TONO_CLASSES: Record<EstadoTono, string> = {
   ok: "bg-emerald-100 text-emerald-800",
   warn: "bg-amber-100 text-amber-900",
   danger: "bg-rose-100 text-rose-800",
+  neutral: "bg-slate-100 text-slate-600",
 };
 
 interface Props {
@@ -61,7 +63,9 @@ export default function FichaListItem({
   });
 
   const { texto, tono } = describirEstado(ficha);
-  const tieneDatos = ficha.estado === "procesada" && ficha.datos !== null;
+  const tieneDatos =
+    (ficha.estado === "procesada" || ficha.estado === "exportada") &&
+    ficha.datos !== null;
 
   async function confirmarEliminar() {
     if (ficha.id === undefined) return;

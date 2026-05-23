@@ -5,7 +5,7 @@
 
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { listFichasByEstado, type FichaRecord } from "./db";
+import { listFichasByEstado, updateFicha, type FichaRecord } from "./db";
 import {
   ALL_FIELDS,
   CHECKBOX_FIELDS,
@@ -113,13 +113,31 @@ function dispararDescarga(blob: Blob, nombre: string): void {
   URL.revokeObjectURL(url);
 }
 
-export async function exportarZip(): Promise<void> {
+export type ExportMode = "nuevas" | "todas";
+
+export async function exportarZip(
+  opts?: { modo?: ExportMode },
+): Promise<void> {
+  const modo = opts?.modo ?? "nuevas";
   try {
-    const fichas = await listFichasByEstado("procesada");
+    const fichas =
+      modo === "todas"
+        ? [
+            ...(await listFichasByEstado("procesada")),
+            ...(await listFichasByEstado("exportada")),
+          ]
+        : await listFichasByEstado("procesada");
     if (fichas.length === 0) return;
     const workbook = construirWorkbook(fichas);
     const blob = await construirZipBlob(workbook, fichas);
     dispararDescarga(blob, nombreZipParaHoy());
+    if (modo === "nuevas") {
+      for (const f of fichas) {
+        if (f.id !== undefined) {
+          await updateFicha(f.id, { estado: "exportada" });
+        }
+      }
+    }
   } catch (e) {
     const detalle = e instanceof Error ? e.message : String(e);
     throw new Error(`No se pudo generar el .zip de exportación: ${detalle}`);
