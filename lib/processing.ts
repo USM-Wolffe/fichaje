@@ -11,6 +11,7 @@ import {
   type FichaRecord,
 } from "./db";
 import type { FichaData } from "./fields";
+import { getAccessKey } from "./auth";
 
 export type ProcessMode = "todas" | "reintentar-errores";
 
@@ -78,7 +79,10 @@ function mensajeCorto(e: unknown): string {
 async function callExtract(imagen: Blob, fichaId: number): Promise<FichaData> {
   const formData = new FormData();
   formData.append("image", imagen, `ficha-${fichaId}.jpg`);
-  const res = await fetch("/api/extract", { method: "POST", body: formData });
+  const headers: Record<string, string> = {};
+  const key = getAccessKey();
+  if (key) headers["x-access-key"] = key;
+  const res = await fetch("/api/extract", { method: "POST", headers, body: formData });
   const json: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     const msg =

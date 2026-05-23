@@ -1,9 +1,19 @@
 import type { Metadata, Viewport } from "next";
+import AccessKeyGate from "@/components/AccessKeyGate";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "FichaScan",
   description: "Digitaliza fichas de contacto Admisión USM",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Fichaje",
+  },
+  icons: {
+    apple: "/icons/icon-192x192.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -20,7 +30,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body>
+        <AccessKeyGate>{children}</AccessKeyGate>
+      </body>
     </html>
   );
 }

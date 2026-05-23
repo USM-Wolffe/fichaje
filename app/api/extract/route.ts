@@ -8,6 +8,14 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  const accessKey = req.headers.get("x-access-key");
+  if (!accessKey || accessKey !== process.env.APP_ACCESS_KEY) {
+    return NextResponse.json(
+      { error: "Clave de acceso inválida." },
+      { status: 401 },
+    );
+  }
+
   try {
     const formData = await req.formData();
     const file = formData.get("image");

@@ -141,7 +141,7 @@ export default function FichaListItem({
             <button
               type="button"
               onClick={() => setMostrarDatos((s) => !s)}
-              className="rounded-md border border-slate-300 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+              className="min-h-[44px] rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
             >
               {mostrarDatos ? "Ocultar" : "Ver datos"}
             </button>

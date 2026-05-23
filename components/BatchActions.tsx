@@ -107,7 +107,7 @@ export default function BatchActions() {
           type="button"
           onClick={() => void processAll()}
           disabled={procesarDisabled}
-          className="flex-1 rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="flex-1 rounded-md bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           Procesar todo ({pendientesParaBoton} pendiente
           {pendientesParaBoton === 1 ? "" : "s"})
@@ -117,7 +117,7 @@ export default function BatchActions() {
             type="button"
             onClick={() => void processAll({ modo: "reintentar-errores" })}
             disabled={reintentarDisabled}
-            className="rounded-md border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-rose-300 bg-white px-3 py-3 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reintentar errores ({progress.conError})
           </button>
@@ -126,7 +126,7 @@ export default function BatchActions() {
           type="button"
           onClick={() => void handleExportar("nuevas")}
           disabled={exportarDisabled}
-          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-md border border-slate-300 bg-white px-3 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {exportando
             ? "Exportando…"
@@ -137,7 +137,7 @@ export default function BatchActions() {
             type="button"
             onClick={() => void handleExportar("todas")}
             disabled={reexportarDisabled}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-slate-300 bg-white px-3 py-3 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Re-exportar todas ({totalReexportar})
           </button>
