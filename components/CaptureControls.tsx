@@ -2,8 +2,10 @@
 
 import type { CSSProperties } from "react";
 
-// Marco guía 3:2 (21 × 14 cm), sólo usado cuando el scanner no cargó
-// (modo fallback Etapa 1): ayuda al usuario a alinear visualmente.
+// Marco guía 3:2 (21 × 14 cm): referencia ESTÁTICA siempre visible para que
+// el usuario sepa dónde apuntar la cámara antes de que la detección se
+// active. El contorno detectado en vivo se dibuja encima como confirmación
+// dinámica, pero NO reemplaza al marco como guía de posicionamiento.
 const FRAME_RATIO_WH = "210 / 140";
 const FRAME_RATIO_HW = "140 / 210";
 const FRAME_FILL_PCT = 95;
@@ -13,7 +15,6 @@ const FRAME_STYLE: CSSProperties = {
 };
 
 interface Props {
-  scannerError: boolean;
   prepWaiting: boolean;
   guardando: boolean;
   totalGuardadas: number | null;
@@ -25,7 +26,6 @@ interface Props {
 
 export default function CaptureControls(props: Props) {
   const {
-    scannerError,
     prepWaiting,
     guardando,
     totalGuardadas,
@@ -37,14 +37,12 @@ export default function CaptureControls(props: Props) {
 
   return (
     <>
-      {scannerError && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div
-            className="rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
-            style={FRAME_STYLE}
-          />
-        </div>
-      )}
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div
+          className="rounded-md border-2 border-dashed border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]"
+          style={FRAME_STYLE}
+        />
+      </div>
 
       <div className="absolute left-3 top-3 rounded-lg bg-black/70 px-3 py-2 text-white">
         <div className="text-[10px] uppercase tracking-wide text-slate-300">

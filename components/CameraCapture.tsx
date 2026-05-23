@@ -156,7 +156,6 @@ export default function CameraCapture() {
 
       {estado === "lista" && (
         <CaptureControls
-          scannerError={scannerError}
           prepWaiting={prepWaiting}
           guardando={guardando}
           totalGuardadas={totalGuardadas}

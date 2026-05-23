@@ -11,6 +11,11 @@ const OPENCV_POLL_MS = 150;
 const RESULT_WIDTH = 2400;
 const RESULT_HEIGHT = 1600;
 const JPEG_QUALITY = 0.92;
+// Umbral mínimo de área del cuadrilátero detectado, relativo al frame del
+// video. Evita que jscanify confunda un recuadro interno de la ficha (grupo
+// de casillas, tabla) con la hoja completa: una casilla nunca supera ~10%
+// del frame; la ficha bien encuadrada supera el 30% con holgura.
+const MIN_AREA_RATIO = 0.3;
 
 // Tipos mínimos de OpenCV.js y jscanify, sólo de los métodos que usamos.
 // Sin `any`: si la API se mueve, fallará el compilador en este archivo.
@@ -43,6 +48,7 @@ interface JScanifyInstance {
     image: HTMLCanvasElement,
     resultWidth: number,
     resultHeight: number,
+    cornerPoints?: PaperCorners,
   ): HTMLCanvasElement | null;
 }
 
@@ -116,6 +122,33 @@ function drawVideoTo(
   return true;
 }
 
+// Fórmula shoelace sobre un cuadrilátero ordenado TL → TR → BR → BL.
+function quadArea(c: Required<PaperCorners>): number {
+  const pts = [
+    c.topLeftCorner,
+    c.topRightCorner,
+    c.bottomRightCorner,
+    c.bottomLeftCorner,
+  ];
+  let sum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    if (!a || !b) return 0;
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+function allCorners(c: PaperCorners): c is Required<PaperCorners> {
+  return !!(
+    c.topLeftCorner &&
+    c.topRightCorner &&
+    c.bottomLeftCorner &&
+    c.bottomRightCorner
+  );
+}
+
 export async function loadScanner(): Promise<Scanner> {
   await loadOpenCv();
   const mod = (await import("jscanify/client")) as
@@ -125,17 +158,38 @@ export async function loadScanner(): Promise<Scanner> {
     typeof mod === "function" ? mod : (mod as { default: JScanifyClass }).default;
   const jscanify = new Cls();
 
-  // Canvases reutilizables (evita asignar memoria por frame).
+  // Canvas reutilizable (evita asignar memoria por frame).
   const frameCanvas = document.createElement("canvas");
+
+  // Busca el contorno más grande y devuelve sus 4 corners SÓLO si superan el
+  // umbral de área mínima. Devolver `null` aquí significa "no hay hoja
+  // detectable que valga la pena" — drawContour deja el overlay limpio y
+  // extractFicha cae al respaldo del frame completo.
+  function findAcceptableCorners(): Required<PaperCorners> | null {
+    const cv = (window as WindowWithCv).cv;
+    if (!cv) return null;
+    const mat = cv.imread(frameCanvas);
+    let contour: CvMat | null = null;
+    try {
+      contour = jscanify.findPaperContour(mat);
+      if (!contour) return null;
+      const corners = jscanify.getCornerPoints(contour);
+      if (!allCorners(corners)) return null;
+      const frameArea = frameCanvas.width * frameCanvas.height;
+      if (frameArea === 0) return null;
+      if (quadArea(corners) / frameArea < MIN_AREA_RATIO) return null;
+      return corners;
+    } finally {
+      contour?.delete();
+      mat.delete();
+    }
+  }
 
   function drawContour(
     video: HTMLVideoElement,
     overlay: HTMLCanvasElement,
   ): boolean {
     if (!drawVideoTo(video, frameCanvas)) return false;
-    const cv = (window as WindowWithCv).cv;
-    if (!cv) return false;
-
     const w = frameCanvas.width;
     const h = frameCanvas.height;
     if (overlay.width !== w) overlay.width = w;
@@ -144,40 +198,31 @@ export async function loadScanner(): Promise<Scanner> {
     if (!ctx) return false;
     ctx.clearRect(0, 0, w, h);
 
-    const mat = cv.imread(frameCanvas);
-    let contour: CvMat | null = null;
-    try {
-      contour = jscanify.findPaperContour(mat);
-      if (!contour) return false;
-      const { topLeftCorner, topRightCorner, bottomLeftCorner, bottomRightCorner } =
-        jscanify.getCornerPoints(contour);
-      if (
-        !topLeftCorner ||
-        !topRightCorner ||
-        !bottomLeftCorner ||
-        !bottomRightCorner
-      ) {
-        return false;
-      }
-      ctx.strokeStyle = "#22d3ee"; // cyan-400: visible sobre cámara y blanco
-      ctx.lineWidth = Math.max(4, Math.round(w / 400));
-      ctx.beginPath();
-      ctx.moveTo(topLeftCorner.x, topLeftCorner.y);
-      ctx.lineTo(topRightCorner.x, topRightCorner.y);
-      ctx.lineTo(bottomRightCorner.x, bottomRightCorner.y);
-      ctx.lineTo(bottomLeftCorner.x, bottomLeftCorner.y);
-      ctx.closePath();
-      ctx.stroke();
-      return true;
-    } finally {
-      contour?.delete();
-      mat.delete();
-    }
+    const corners = findAcceptableCorners();
+    if (!corners) return false;
+
+    ctx.strokeStyle = "#22d3ee"; // cyan-400: visible sobre cámara y blanco
+    ctx.lineWidth = Math.max(4, Math.round(w / 400));
+    ctx.beginPath();
+    ctx.moveTo(corners.topLeftCorner.x, corners.topLeftCorner.y);
+    ctx.lineTo(corners.topRightCorner.x, corners.topRightCorner.y);
+    ctx.lineTo(corners.bottomRightCorner.x, corners.bottomRightCorner.y);
+    ctx.lineTo(corners.bottomLeftCorner.x, corners.bottomLeftCorner.y);
+    ctx.closePath();
+    ctx.stroke();
+    return true;
   }
 
   async function extractFicha(video: HTMLVideoElement): Promise<Blob | null> {
     if (!drawVideoTo(video, frameCanvas)) return null;
-    const result = jscanify.extractPaper(frameCanvas, RESULT_WIDTH, RESULT_HEIGHT);
+    const corners = findAcceptableCorners();
+    if (!corners) return null;
+    const result = jscanify.extractPaper(
+      frameCanvas,
+      RESULT_WIDTH,
+      RESULT_HEIGHT,
+      corners,
+    );
     if (!result) return null;
     return new Promise<Blob | null>((resolve, reject) => {
       result.toBlob(

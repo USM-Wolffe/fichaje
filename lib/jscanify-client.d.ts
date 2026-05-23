@@ -19,6 +19,7 @@ declare module "jscanify/client" {
       image: HTMLCanvasElement,
       resultWidth: number,
       resultHeight: number,
+      cornerPoints?: PaperCorners,
     ): HTMLCanvasElement | null;
   }
   export default JScanify;
