@@ -4,12 +4,12 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { countFichas, createFicha } from "@/lib/db";
 
 // =============================================================================
-// AJUSTAR AQUÍ si el marco guía no calza con la ficha real. Es la proporción
-// ancho:alto de la "Ficha de Contacto Admisión USM" sostenida en vertical.
-// 210:297 = A4. Si la ficha es Carta (US Letter) usa 216:279. Solo importa la
-// razón entre los dos números; los valores absolutos son irrelevantes.
+// Proporción ancho:alto de la "Ficha de Contacto Admisión USM" en horizontal
+// (21 × 14 cm → razón 3:2). Solo importa la razón entre los dos números.
+// El marco es SOLO una ayuda visual de alineación: NO recorta la captura.
+// La foto guardada es siempre el frame completo del video.
 // =============================================================================
-const FICHA_ASPECT_RATIO = { width: 210, height: 297 } as const;
+const FICHA_ASPECT_RATIO = { width: 210, height: 140 } as const;
 
 // Cuánto del contenedor (ancho o alto, lo que limite) ocupa el marco guía.
 // 0.95 = 95% → la ficha se captura cerca y grande, dejando un pequeño borde
@@ -87,8 +87,7 @@ export default function CameraCapture() {
     if (estado !== "lista" || guardando) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const frameEl = frameRef.current;
-    if (!video || !canvas || !frameEl) return;
+    if (!video || !canvas) return;
 
     setGuardando(true);
     try {
@@ -98,48 +97,14 @@ export default function CameraCapture() {
         throw new Error("La cámara aún no entrega imagen.");
       }
 
-      // El <video> usa object-cover: la imagen llena el contenedor y los
-      // bordes que sobran se recortan. Para guardar SOLO lo que está dentro
-      // del marco guía hay que mapear coordenadas de pantalla → píxeles del
-      // video fuente, descontando el escalado y el desplazamiento del cover.
-      const videoRect = video.getBoundingClientRect();
-      const frameRect = frameEl.getBoundingClientRect();
-      const containerW = videoRect.width;
-      const containerH = videoRect.height;
-
-      const scale = Math.max(containerW / videoW, containerH / videoH);
-      const offsetX = (containerW - videoW * scale) / 2;
-      const offsetY = (containerH - videoH * scale) / 2;
-
-      const frameLeftInVideo = frameRect.left - videoRect.left;
-      const frameTopInVideo = frameRect.top - videoRect.top;
-
-      let srcX = (frameLeftInVideo - offsetX) / scale;
-      let srcY = (frameTopInVideo - offsetY) / scale;
-      let srcW = frameRect.width / scale;
-      let srcH = frameRect.height / scale;
-
-      // Por seguridad, recortar contra los bordes reales del frame de video.
-      srcX = Math.max(0, Math.min(videoW, srcX));
-      srcY = Math.max(0, Math.min(videoH, srcY));
-      srcW = Math.max(1, Math.min(videoW - srcX, srcW));
-      srcH = Math.max(1, Math.min(videoH - srcY, srcH));
-
-      canvas.width = Math.round(srcW);
-      canvas.height = Math.round(srcH);
+      // Guardar el frame completo del video, sin recortar al marco guía.
+      // El marco es solo una ayuda visual de alineación; el modelo recibe la
+      // mayor resolución que el dispositivo entregue.
+      canvas.width = videoW;
+      canvas.height = videoH;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("No se pudo preparar el lienzo de captura.");
-      ctx.drawImage(
-        video,
-        srcX,
-        srcY,
-        srcW,
-        srcH,
-        0,
-        0,
-        canvas.width,
-        canvas.height,
-      );
+      ctx.drawImage(video, 0, 0, videoW, videoH);
 
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(

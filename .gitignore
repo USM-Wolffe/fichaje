@@ -23,3 +23,10 @@ Thumbs.db
 
 # typescript
 *.tsbuildinfo
+
+# openspec (herramienta / specs locales, no subir al repo)
+/openspec/
+
+# documentación local; solo versionar README.md
+*.md
+!README.md
