@@ -12,6 +12,7 @@ import {
 } from "./db";
 import type { FichaData } from "./fields";
 import { getAccessKey } from "./auth";
+import { validarFicha } from "./validation";
 
 export type ProcessMode = "todas" | "reintentar-errores";
 
@@ -103,8 +104,17 @@ async function callExtract(imagen: Blob, fichaId: number): Promise<FichaData> {
 async function procesarUna(ficha: FichaRecord): Promise<"procesada" | "error"> {
   if (ficha.id === undefined) return "error";
   try {
-    const datos = await callExtract(ficha.imagen, ficha.id);
-    await updateFicha(ficha.id, { estado: "procesada", datos });
+    const datosRaw = await callExtract(ficha.imagen, ficha.id);
+    let datos: FichaData = datosRaw;
+    let banderas: import("./db").FichaBanderas | null = null;
+    try {
+      const resultado = validarFicha(datosRaw);
+      datos = resultado.datos;
+      banderas = resultado.banderas;
+    } catch {
+      // Validation failure must not break the queue
+    }
+    await updateFicha(ficha.id, { estado: "procesada", datos, banderas });
     return "procesada";
   } catch (e) {
     await updateFicha(ficha.id, {
