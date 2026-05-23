@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { extractFichaData } from "@/lib/vision";
 
-// Necesitamos Node runtime para manejar el binario de la imagen con Buffer.
+//Necesitamos Node runtime para manejar el binario de la imagen con Buffer.
 export const runtime = "nodejs";
 // En Vercel Pro permite que el modelo se tome hasta 60s; en hobby (10s) Gemini
 // Flash igual responde a tiempo en condiciones normales.
