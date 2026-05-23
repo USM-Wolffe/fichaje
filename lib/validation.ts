@@ -24,22 +24,17 @@ const KNOWN_DOMAINS = [
 function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    Array<number>(n + 1).fill(0),
-  );
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  const prev: number[] = Array.from({ length: n + 1 }, (_, j) => j);
+  const curr: number[] = Array.from({ length: n + 1 }, () => 0);
   for (let i = 1; i <= m; i++) {
+    curr[0] = i;
     for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[i][j] = Math.min(
-        dp[i - 1][j] + 1,
-        dp[i][j - 1] + 1,
-        dp[i - 1][j - 1] + cost,
-      );
+      const cost = a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(prev[j]! + 1, curr[j - 1]! + 1, prev[j - 1]! + cost);
     }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j]!;
   }
-  return dp[m][n];
+  return prev[n]!;
 }
 
 function validateRut(raw: string): { status: RutResult; normalized: string } {
@@ -53,7 +48,7 @@ function validateRut(raw: string): { status: RutResult; normalized: string } {
   let sum = 0;
   const digits = body.split("").reverse();
   for (let i = 0; i < digits.length; i++) {
-    sum += parseInt(digits[i], 10) * weights[i % weights.length];
+    sum += parseInt(digits[i]!, 10) * weights[i % weights.length]!;
   }
   const remainder = sum % 11;
   const expected = 11 - remainder;
@@ -72,7 +67,8 @@ function validateEmail(raw: string): { flagged: boolean; corrected: string } {
   if (/\s/.test(raw.trim())) return { flagged: true, corrected: raw };
   const parts = raw.trim().split("@");
   if (parts.length !== 2) return { flagged: true, corrected: raw };
-  const [local, domain] = parts;
+  const local = parts[0]!;
+  const domain = parts[1]!;
   if (local === "" || domain === "") return { flagged: true, corrected: raw };
   const dotIdx = domain.lastIndexOf(".");
   if (dotIdx < 1) return { flagged: true, corrected: raw };
