@@ -13,7 +13,7 @@ import {
 } from "./fields";
 import { extractWithBedrock } from "./vision-bedrock";
 import { extractWithGemini } from "./vision-gemini";
-import type { RawFicha } from "./vision-types";
+import type { CropImages, RawFicha } from "./vision-types";
 
 type Provider = "gemini" | "bedrock";
 
@@ -29,12 +29,13 @@ function selectProvider(): Provider {
 export async function extractFichaData(
   imageBytes: ArrayBuffer,
   mimeType: string,
+  crops?: CropImages,
 ): Promise<FichaData> {
   const provider = selectProvider();
   const raw =
     provider === "gemini"
-      ? await extractWithGemini(imageBytes, mimeType)
-      : await extractWithBedrock(imageBytes, mimeType);
+      ? await extractWithGemini(imageBytes, mimeType, crops)
+      : await extractWithBedrock(imageBytes, mimeType, crops);
   return sanitize(raw);
 }
 

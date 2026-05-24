@@ -3,7 +3,7 @@
 // auth via ?key=, JSON forzado con responseMimeType.
 
 import { EXTRACTION_PROMPT } from "./vision-prompt";
-import type { RawFicha } from "./vision-types";
+import type { CropImages, RawFicha } from "./vision-types";
 
 // Probar a "gemini-2.5-pro" si Flash empieza a fallar mucho sobre imágenes
 // limpias.
@@ -14,9 +14,16 @@ type GeminiResponse = {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
 };
 
+const CROP_LABELS: Record<string, string> = {
+  rut: "Recorte ampliado del campo RUT:",
+  celular: "Recorte ampliado del campo celular:",
+  correo: "Recorte ampliado del campo correo/email:",
+};
+
 export async function extractWithGemini(
   imageBytes: ArrayBuffer,
   mimeType: string,
+  crops?: CropImages,
 ): Promise<RawFicha> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -24,7 +31,7 @@ export async function extractWithGemini(
   }
   try {
     const buffer = Buffer.from(imageBytes);
-    const raw = await callGemini(apiKey, buffer, mimeType);
+    const raw = await callGemini(apiKey, buffer, mimeType, crops);
     return ensureRawFicha(raw);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -36,21 +43,33 @@ async function callGemini(
   apiKey: string,
   buffer: Buffer,
   mimeType: string,
+  crops?: CropImages,
 ): Promise<unknown> {
-  const body = {
-    contents: [
-      {
-        parts: [
-          { text: EXTRACTION_PROMPT },
-          {
-            inline_data: {
-              mime_type: mimeType,
-              data: buffer.toString("base64"),
-            },
-          },
-        ],
+  const parts: Array<Record<string, unknown>> = [
+    { text: EXTRACTION_PROMPT },
+    {
+      inline_data: {
+        mime_type: mimeType,
+        data: buffer.toString("base64"),
       },
-    ],
+    },
+  ];
+  if (crops) {
+    for (const [key, label] of Object.entries(CROP_LABELS)) {
+      const crop = crops[key as keyof CropImages];
+      if (crop) {
+        parts.push({ text: label });
+        parts.push({
+          inline_data: {
+            mime_type: crop.mimeType,
+            data: Buffer.from(crop.bytes).toString("base64"),
+          },
+        });
+      }
+    }
+  }
+  const body = {
+    contents: [{ parts }],
     generationConfig: { responseMimeType: "application/json", temperature: 0 },
   };
   const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {

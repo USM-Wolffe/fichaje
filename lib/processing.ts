@@ -1,10 +1,3 @@
-// Cola de procesamiento en lote con checkpoints. Es la ÚNICA función que
-// llama a /api/extract en el cliente. Corre secuencial (concurrencia = 1)
-// para cuidar la cuota del modelo y para que el checkpoint en IndexedDB sea
-// trivial: cada ficha pasa a "procesada" o "error" ANTES de avanzar a la
-// siguiente. Si la pestaña se cierra a mitad, la próxima invocación retoma
-// solo las que sigan en "capturada" (o "error", en modo reintento).
-
 import {
   listFichasByEstado,
   updateFicha,
@@ -12,6 +5,7 @@ import {
 } from "./db";
 import type { FichaData } from "./fields";
 import { getAccessKey } from "./auth";
+import { cropCriticalFields, type CropFieldKey } from "./field-crops";
 import { validarFicha } from "./validation";
 
 export type ProcessMode = "todas" | "reintentar-errores";
@@ -77,9 +71,18 @@ function mensajeCorto(e: unknown): string {
   return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
 }
 
-async function callExtract(imagen: Blob, fichaId: number): Promise<FichaData> {
+async function callExtract(
+  imagen: Blob,
+  fichaId: number,
+  crops?: Record<CropFieldKey, Blob>,
+): Promise<FichaData> {
   const formData = new FormData();
   formData.append("image", imagen, `ficha-${fichaId}.jpg`);
+  if (crops) {
+    for (const [key, blob] of Object.entries(crops)) {
+      formData.append(`crop-${key}`, blob, `crop-${key}-${fichaId}.png`);
+    }
+  }
   const headers: Record<string, string> = {};
   const key = getAccessKey();
   if (key) headers["x-access-key"] = key;
@@ -104,7 +107,13 @@ async function callExtract(imagen: Blob, fichaId: number): Promise<FichaData> {
 async function procesarUna(ficha: FichaRecord): Promise<"procesada" | "error"> {
   if (ficha.id === undefined) return "error";
   try {
-    const datosRaw = await callExtract(ficha.imagen, ficha.id);
+    let crops: Record<CropFieldKey, Blob> | undefined;
+    try {
+      crops = await cropCriticalFields(ficha.imagen);
+    } catch {
+      // Fallo en el recorte no debe romper el procesamiento
+    }
+    const datosRaw = await callExtract(ficha.imagen, ficha.id, crops);
     let datos: FichaData = datosRaw;
     let banderas: import("./db").FichaBanderas | null = null;
     try {

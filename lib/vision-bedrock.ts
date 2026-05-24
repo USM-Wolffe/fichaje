@@ -1,13 +1,4 @@
-// Cliente Bedrock (Claude). Usa la API key bearer reciente de AWS
-// (no SigV4, no SDK) y la Anthropic Messages API vía Bedrock.
-//
-// Para forzar JSON estructurado usamos TOOL USE (function calling) en
-// lugar de pre-fill `{`. El tool_choice forzado obliga a Claude a llamar
-// la herramienta `registrar_ficha` con un input que ya viene parseado
-// como objeto — sin necesidad de JSON.parse. Esto permite que Claude
-// razone internamente antes de devolver la respuesta, en vez de
-// arrancar inmediatamente con `{` (lo que daba peor calidad en OCR
-// fino de manuscritos).
+// Cliente Bedrock (Claude). Tool use forzado para JSON estructurado.
 
 import {
   CAMPUS_INTERES_OPTIONS,
@@ -16,19 +7,13 @@ import {
   USM_ES_ALTERNATIVA_OPTIONS,
 } from "./fields";
 import { EXTRACTION_PROMPT } from "./vision-prompt";
-import type { RawFicha } from "./vision-types";
+import type { CropImages, RawFicha } from "./vision-types";
 
 const DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
 const DEFAULT_REGION = "us-east-2";
 const ANTHROPIC_VERSION = "bedrock-2023-05-31";
 const TOOL_NAME = "registrar_ficha";
 
-// JSON Schema derivado de lib/fields.ts (fuente única de verdad). Las
-// opciones de los enums se spreadean desde las constantes del archivo
-// de campos para que un cambio en `fields.ts` propague aquí
-// automáticamente. Los campos de texto pueden ser "" (vacío); los
-// enums de selección única incluyen "" en el enum porque el campo es
-// opcional. `campusInteres` es un array que puede estar vacío.
 const TEXT_FIELD = { type: "string" } as const;
 const TOOL_SCHEMA = {
   type: "object",
@@ -91,9 +76,16 @@ type BedrockResponse = {
   content?: Array<BedrockToolUseBlock | BedrockTextBlock>;
 };
 
+const CROP_LABELS: Record<string, string> = {
+  rut: "Recorte ampliado del campo RUT:",
+  celular: "Recorte ampliado del campo celular:",
+  correo: "Recorte ampliado del campo correo/email:",
+};
+
 export async function extractWithBedrock(
   imageBytes: ArrayBuffer,
   mimeType: string,
+  crops?: CropImages,
 ): Promise<RawFicha> {
   const token = process.env.AWS_BEARER_TOKEN_BEDROCK;
   if (!token) {
@@ -104,7 +96,7 @@ export async function extractWithBedrock(
   const region = process.env.AWS_REGION ?? DEFAULT_REGION;
   const modelId = process.env.BEDROCK_MODEL_ID ?? DEFAULT_MODEL;
   try {
-    const input = await callBedrock(token, region, modelId, imageBytes, mimeType);
+    const input = await callBedrock(token, region, modelId, imageBytes, mimeType, crops);
     return ensureRawFicha(input);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -118,9 +110,33 @@ async function callBedrock(
   modelId: string,
   imageBytes: ArrayBuffer,
   mimeType: string,
+  crops?: CropImages,
 ): Promise<Record<string, unknown>> {
   const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelId)}/invoke`;
   const base64 = Buffer.from(imageBytes).toString("base64");
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: "image",
+      source: { type: "base64", media_type: mimeType, data: base64 },
+    },
+    { type: "text", text: EXTRACTION_PROMPT },
+  ];
+  if (crops) {
+    for (const [key, label] of Object.entries(CROP_LABELS)) {
+      const crop = crops[key as keyof CropImages];
+      if (crop) {
+        content.push({ type: "text", text: label });
+        content.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: crop.mimeType,
+            data: Buffer.from(crop.bytes).toString("base64"),
+          },
+        });
+      }
+    }
+  }
   const body = {
     anthropic_version: ANTHROPIC_VERSION,
     max_tokens: 2048,
@@ -133,20 +149,8 @@ async function callBedrock(
         input_schema: TOOL_SCHEMA,
       },
     ],
-    // Fuerza a Claude a llamar la herramienta — no emite texto libre.
     tool_choice: { type: "tool", name: TOOL_NAME },
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: { type: "base64", media_type: mimeType, data: base64 },
-          },
-          { type: "text", text: EXTRACTION_PROMPT },
-        ],
-      },
-    ],
+    messages: [{ role: "user", content }],
   };
   const res = await fetch(url, {
     method: "POST",

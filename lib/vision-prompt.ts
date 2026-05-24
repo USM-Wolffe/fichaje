@@ -76,4 +76,11 @@ Reglas de formato:
   • NUNCA inventes el nombre de usuario (la parte antes de la "@"). Si
     no se lee con certeza, dejá email = "".
 - campusInteres solo incluye los marcados.
-- No agregues claves extra.`;
+- No agregues claves extra.
+
+RECORTES AMPLIADOS (si están presentes):
+Después de la imagen completa pueden venir recortes ampliados de campos
+críticos (RUT, celular, correo). Cada recorte viene precedido de una etiqueta
+que indica a qué campo corresponde. Cuando un recorte esté presente, PRIORIZÁ
+la lectura de ese recorte por sobre la imagen completa para el campo indicado:
+el recorte tiene mayor resolución y contraste.`;

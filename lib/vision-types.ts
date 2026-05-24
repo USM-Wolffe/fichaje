@@ -23,3 +23,14 @@ export interface RawFicha {
   campusInteres: unknown;
   conocerViasAdmision: unknown;
 }
+
+export interface CropImage {
+  bytes: ArrayBuffer;
+  mimeType: string;
+}
+
+export interface CropImages {
+  rut?: CropImage;
+  celular?: CropImage;
+  correo?: CropImage;
+}

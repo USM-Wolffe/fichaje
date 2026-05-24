@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { extractFichaData } from "@/lib/vision";
+import type { CropImages } from "@/lib/vision-types";
 
 //Necesitamos Node runtime para manejar el binario de la imagen con Buffer.
 export const runtime = "nodejs";
@@ -27,7 +28,24 @@ export async function POST(req: Request) {
     }
     const arrayBuffer = await file.arrayBuffer();
     const mimeType = file.type || "image/jpeg";
-    const datos = await extractFichaData(arrayBuffer, mimeType);
+
+    const crops: CropImages = {};
+    const cropKeys = ["rut", "celular", "correo"] as const;
+    for (const key of cropKeys) {
+      const cropFile = formData.get(`crop-${key}`);
+      if (cropFile instanceof File) {
+        crops[key] = {
+          bytes: await cropFile.arrayBuffer(),
+          mimeType: cropFile.type || "image/png",
+        };
+      }
+    }
+
+    const datos = await extractFichaData(
+      arrayBuffer,
+      mimeType,
+      Object.keys(crops).length > 0 ? crops : undefined,
+    );
     return NextResponse.json({ datos });
   } catch (e) {
     const message =
