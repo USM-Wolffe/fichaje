@@ -1,12 +1,11 @@
-// Cliente Bedrock (Claude). Tool use forzado para JSON estructurado.
-
 import {
+  ALL_FIELDS,
   CAMPUS_INTERES_OPTIONS,
   CONOCER_VIAS_ADMISION_OPTIONS,
   CURSO_OPTIONS,
   USM_ES_ALTERNATIVA_OPTIONS,
 } from "./fields";
-import { EXTRACTION_PROMPT } from "./vision-prompt";
+import { EXTRACTION_PROMPT, rereadPrompt } from "./vision-prompt";
 import type { CropImages, RawFicha } from "./vision-types";
 
 const DEFAULT_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
@@ -45,25 +44,7 @@ const TOOL_SCHEMA = {
       enum: [...CONOCER_VIAS_ADMISION_OPTIONS, ""],
     },
   },
-  required: [
-    "nombre",
-    "apellidoPaterno",
-    "apellidoMaterno",
-    "rut",
-    "email",
-    "telefonoFijo",
-    "celular",
-    "establecimiento",
-    "ciudad",
-    "promedioNotas",
-    "carrera1",
-    "carrera2",
-    "carrera3",
-    "curso",
-    "usmEsAlternativa",
-    "campusInteres",
-    "conocerViasAdmision",
-  ],
+  required: [...ALL_FIELDS],
 } as const;
 
 type BedrockToolUseBlock = {
@@ -82,21 +63,23 @@ const CROP_LABELS: Record<string, string> = {
   correo: "Recorte ampliado del campo correo/email:",
 };
 
+function getBedrockConfig() {
+  const token = process.env.AWS_BEARER_TOKEN_BEDROCK;
+  if (!token) throw new Error("Falta AWS_BEARER_TOKEN_BEDROCK en el entorno del servidor.");
+  const region = process.env.AWS_REGION ?? DEFAULT_REGION;
+  const modelId = process.env.BEDROCK_MODEL_ID ?? DEFAULT_MODEL;
+  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelId)}/invoke`;
+  return { token, url };
+}
+
 export async function extractWithBedrock(
   imageBytes: ArrayBuffer,
   mimeType: string,
   crops?: CropImages,
 ): Promise<RawFicha> {
-  const token = process.env.AWS_BEARER_TOKEN_BEDROCK;
-  if (!token) {
-    throw new Error(
-      "Falta AWS_BEARER_TOKEN_BEDROCK en el entorno del servidor.",
-    );
-  }
-  const region = process.env.AWS_REGION ?? DEFAULT_REGION;
-  const modelId = process.env.BEDROCK_MODEL_ID ?? DEFAULT_MODEL;
+  const { token, url } = getBedrockConfig();
   try {
-    const input = await callBedrock(token, region, modelId, imageBytes, mimeType, crops);
+    const input = await callBedrock(token, url, imageBytes, mimeType, crops);
     return ensureRawFicha(input);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -106,13 +89,11 @@ export async function extractWithBedrock(
 
 async function callBedrock(
   token: string,
-  region: string,
-  modelId: string,
+  url: string,
   imageBytes: ArrayBuffer,
   mimeType: string,
   crops?: CropImages,
 ): Promise<Record<string, unknown>> {
-  const url = `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(modelId)}/invoke`;
   const base64 = Buffer.from(imageBytes).toString("base64");
   const content: Array<Record<string, unknown>> = [
     {
@@ -141,14 +122,11 @@ async function callBedrock(
     anthropic_version: ANTHROPIC_VERSION,
     max_tokens: 2048,
     temperature: 0,
-    tools: [
-      {
-        name: TOOL_NAME,
-        description:
-          "Registra los 17 campos extraídos de una ficha de contacto de admisión USM. Devolvé cada campo con el valor leído de la imagen, o cadena vacía si no se ve o está tachado sin reemplazo.",
-        input_schema: TOOL_SCHEMA,
-      },
-    ],
+    tools: [{
+      name: TOOL_NAME,
+      description: "Registra los 17 campos extraídos de una ficha de contacto de admisión USM.",
+      input_schema: TOOL_SCHEMA,
+    }],
     tool_choice: { type: "tool", name: TOOL_NAME },
     messages: [{ role: "user", content }],
   };
@@ -175,24 +153,46 @@ async function callBedrock(
   return toolUse.input;
 }
 
-function ensureRawFicha(input: Record<string, unknown>): RawFicha {
-  return {
-    nombre: input.nombre,
-    apellidoPaterno: input.apellidoPaterno,
-    apellidoMaterno: input.apellidoMaterno,
-    rut: input.rut,
-    email: input.email,
-    telefonoFijo: input.telefonoFijo,
-    celular: input.celular,
-    establecimiento: input.establecimiento,
-    ciudad: input.ciudad,
-    promedioNotas: input.promedioNotas,
-    carrera1: input.carrera1,
-    carrera2: input.carrera2,
-    carrera3: input.carrera3,
-    curso: input.curso,
-    usmEsAlternativa: input.usmEsAlternativa,
-    campusInteres: input.campusInteres,
-    conocerViasAdmision: input.conocerViasAdmision,
+export async function rereadFieldWithBedrock(
+  cropBytes: ArrayBuffer,
+  mimeType: string,
+  fieldName: string,
+): Promise<string> {
+  const { token, url } = getBedrockConfig();
+  const body = {
+    anthropic_version: ANTHROPIC_VERSION,
+    max_tokens: 256,
+    temperature: 0.3,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mimeType, data: Buffer.from(cropBytes).toString("base64") } },
+        { type: "text", text: rereadPrompt(fieldName) },
+      ],
+    }],
   };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Bedrock reread respondió ${res.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as BedrockResponse;
+  const textBlock = data.content?.find((c): c is BedrockTextBlock => c.type === "text");
+  const raw = textBlock?.text ?? "";
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "string" ? parsed : raw.replace(/^"|"$/g, "").trim();
+  } catch {
+    return raw.replace(/^"|"$/g, "").trim();
+  }
+}
+
+function ensureRawFicha(input: Record<string, unknown>): RawFicha {
+  const out = {} as Record<string, unknown>;
+  for (const key of ALL_FIELDS) out[key] = input[key];
+  return out as unknown as RawFicha;
 }

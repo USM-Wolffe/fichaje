@@ -84,3 +84,18 @@ críticos (RUT, celular, correo). Cada recorte viene precedido de una etiqueta
 que indica a qué campo corresponde. Cuando un recorte esté presente, PRIORIZÁ
 la lectura de ese recorte por sobre la imagen completa para el campo indicado:
 el recorte tiene mayor resolución y contraste.`;
+
+const REREAD_HINTS: Record<string, string> = {
+  rut: "un RUT chileno: dígitos + guion + dígito verificador (o K). Ejemplo: 12345678-9",
+  celular: "un número de celular chileno de 9 dígitos que empieza por 9. Solo dígitos",
+  correo: "una dirección de email completa con @ y dominio",
+};
+
+export function rereadPrompt(fieldName: string): string {
+  const hint = REREAD_HINTS[fieldName] ?? "un campo de texto";
+  return `Esta imagen es un recorte ampliado de un campo de una ficha manuscrita.
+El campo es: ${hint}.
+Lee EXACTAMENTE lo que ves escrito, carácter por carácter, casilla por casilla.
+Si hay algo tachado con corrección al lado, usá solo la corrección.
+Devolvé SOLO el valor leído como un string JSON (entre comillas). Nada más.`;
+}

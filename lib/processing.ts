@@ -6,7 +6,14 @@ import {
 import type { FichaData } from "./fields";
 import { getAccessKey } from "./auth";
 import { cropCriticalFields, type CropFieldKey } from "./field-crops";
+import { rereadWithVoting } from "./reread";
 import { validarFicha } from "./validation";
+
+const REREAD_TARGETS: Array<[CropFieldKey, keyof FichaData, string]> = [
+  ["rut", "rut", "rut"],
+  ["celular", "celular", "celular"],
+  ["correo", "email", "correo"],
+];
 
 export type ProcessMode = "todas" | "reintentar-errores";
 
@@ -18,11 +25,6 @@ export type Progress = {
   estado: "idle" | "corriendo" | "terminada";
 };
 
-// ---------------------------------------------------------------------------
-// Store interno. Vive a nivel de módulo para sobrevivir a la navegación entre
-// rutas: aunque BatchActions se desmonte, la cola sigue corriendo y el
-// componente recupera el estado al re-montarse con getProgress().
-// ---------------------------------------------------------------------------
 let currentProgress: Progress = {
   procesadas: 0,
   pendientes: 0,
@@ -33,37 +35,24 @@ let currentProgress: Progress = {
 
 const listeners = new Set<(p: Progress) => void>();
 
-function progressEquals(a: Progress, b: Progress): boolean {
-  return (
-    a.procesadas === b.procesadas &&
-    a.pendientes === b.pendientes &&
-    a.conError === b.conError &&
-    a.estado === b.estado &&
-    (a.actual?.id ?? null) === (b.actual?.id ?? null)
-  );
-}
-
 function emit(next: Progress): void {
-  if (progressEquals(currentProgress, next)) return;
+  const c = currentProgress;
+  if (c.procesadas === next.procesadas && c.pendientes === next.pendientes &&
+      c.conError === next.conError && c.estado === next.estado &&
+      (c.actual?.id ?? null) === (next.actual?.id ?? null)) return;
   currentProgress = next;
   for (const cb of listeners) cb(next);
 }
 
 export function subscribe(cb: (p: Progress) => void): () => void {
   listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
+  return () => { listeners.delete(cb); };
 }
 
 export function getProgress(): Progress {
   return currentProgress;
 }
 
-// ---------------------------------------------------------------------------
-// Single-flight: una sola corrida activa. Una segunda invocación retorna sin
-// efecto (no se duplican llamadas al modelo).
-// ---------------------------------------------------------------------------
 let corriendo = false;
 
 function mensajeCorto(e: unknown): string {
@@ -122,6 +111,17 @@ async function procesarUna(ficha: FichaRecord): Promise<"procesada" | "error"> {
       banderas = resultado.banderas;
     } catch {
       // Validation failure must not break the queue
+    }
+    if (banderas && crops) {
+      for (const [crop, dk, fn] of REREAD_TARGETS) {
+        if (!banderas[dk] || !crops[crop]) continue;
+        try {
+          const { value, confident } = await rereadWithVoting(crops[crop], fn);
+          if (!value) continue;
+          const rv = validarFicha({ ...datos, [dk]: value } as FichaData);
+          if (!rv.banderas[dk] || confident) { datos = rv.datos; banderas = rv.banderas; }
+        } catch { /* reread failure leaves original flag */ }
+      }
     }
     await updateFicha(ficha.id, { estado: "procesada", datos, banderas });
     return "procesada";

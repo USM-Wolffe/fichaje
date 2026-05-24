@@ -37,6 +37,39 @@ function levenshtein(a: string, b: string): number {
   return prev[n]!;
 }
 
+const CONFUSED_DIGITS: Record<string, string[]> = {
+  "1": ["4", "7"],
+  "4": ["1", "9"],
+  "9": ["4", "1"],
+  "7": ["1"],
+};
+
+function computeDv(body: string): string {
+  const weights = [2, 3, 4, 5, 6, 7];
+  let sum = 0;
+  const digits = body.split("").reverse();
+  for (let i = 0; i < digits.length; i++) {
+    sum += parseInt(digits[i]!, 10) * weights[i % weights.length]!;
+  }
+  const expected = 11 - (sum % 11);
+  if (expected === 11) return "0";
+  if (expected === 10) return "K";
+  return String(expected);
+}
+
+function tryFixRut(body: string, dvGiven: string): string | null {
+  for (let pos = 0; pos < body.length; pos++) {
+    const original = body[pos]!;
+    const swaps = CONFUSED_DIGITS[original];
+    if (!swaps) continue;
+    for (const replacement of swaps) {
+      const candidate = body.slice(0, pos) + replacement + body.slice(pos + 1);
+      if (computeDv(candidate) === dvGiven) return candidate;
+    }
+  }
+  return null;
+}
+
 function validateRut(raw: string): { status: RutResult; normalized: string } {
   const cleaned = raw.replace(/[\s.\-]/g, "").toUpperCase();
   if (cleaned === "") return { status: "empty", normalized: raw };
@@ -44,21 +77,16 @@ function validateRut(raw: string): { status: RutResult; normalized: string } {
   const body = cleaned.slice(0, -1);
   const dvGiven = cleaned.slice(-1);
   if (!/^\d+$/.test(body)) return { status: "invalid", normalized: raw };
-  const weights = [2, 3, 4, 5, 6, 7];
-  let sum = 0;
-  const digits = body.split("").reverse();
-  for (let i = 0; i < digits.length; i++) {
-    sum += parseInt(digits[i]!, 10) * weights[i % weights.length]!;
+
+  if (computeDv(body) === dvGiven) {
+    return { status: "valid", normalized: body + dvGiven };
   }
-  const remainder = sum % 11;
-  const expected = 11 - remainder;
-  let dvExpected: string;
-  if (expected === 11) dvExpected = "0";
-  else if (expected === 10) dvExpected = "K";
-  else dvExpected = String(expected);
-  if (dvGiven === dvExpected) {
-    return { status: "valid", normalized: body + dvExpected };
+
+  const fixed = tryFixRut(body, dvGiven);
+  if (fixed) {
+    return { status: "valid", normalized: fixed + dvGiven };
   }
+
   return { status: "invalid", normalized: raw };
 }
 
@@ -93,57 +121,40 @@ function validateEmail(raw: string): { flagged: boolean; corrected: string } {
 
 function validateCelular(raw: string): { flagged: boolean; normalized: string } {
   if (raw.trim() === "") return { flagged: false, normalized: raw };
-  let digits = raw.replace(/\D/g, "");
-  if (digits.startsWith("56") && digits.length === 11) {
-    digits = digits.slice(2);
-  }
-  if (digits.startsWith("0") && digits.length === 10) {
-    digits = digits.slice(1);
-  }
-  if (digits.length !== 9 || !digits.startsWith("9")) {
-    return { flagged: true, normalized: raw };
-  }
-  return { flagged: false, normalized: digits };
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("56") && d.length === 11) d = d.slice(2);
+  if (d.startsWith("0") && d.length === 10) d = d.slice(1);
+  return d.length === 9 && d.startsWith("9")
+    ? { flagged: false, normalized: d }
+    : { flagged: true, normalized: raw };
 }
 
 function validateTelefonoFijo(raw: string): { flagged: boolean; normalized: string } {
   if (raw.trim() === "") return { flagged: false, normalized: raw };
   if (/[a-zA-Z]/.test(raw)) return { flagged: true, normalized: raw };
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length < 7 || digits.length > 11) {
-    return { flagged: true, normalized: raw };
-  }
-  return { flagged: false, normalized: digits };
+  const d = raw.replace(/\D/g, "");
+  return d.length >= 7 && d.length <= 11
+    ? { flagged: false, normalized: d }
+    : { flagged: true, normalized: raw };
 }
 
 function validatePromedioNotas(raw: string): { flagged: boolean; normalized: string } {
   if (raw.trim() === "") return { flagged: false, normalized: raw };
-  const sanitized = raw.trim().replace(",", ".");
-  const num = parseFloat(sanitized);
-  if (isNaN(num)) return { flagged: true, normalized: raw };
-  if (num < 1.0 || num > 7.0) return { flagged: true, normalized: raw };
-  return { flagged: false, normalized: sanitized };
-}
-
-function isBlank(val: string): boolean {
-  return val.trim() === "";
+  const s = raw.trim().replace(",", ".");
+  const n = parseFloat(s);
+  return !isNaN(n) && n >= 1.0 && n <= 7.0
+    ? { flagged: false, normalized: s }
+    : { flagged: true, normalized: raw };
 }
 
 type SingleSelectField = "curso" | "usmEsAlternativa" | "conocerViasAdmision";
 
-function validateSingleSelect(
-  value: string,
-  field: SingleSelectField,
-): boolean {
-  if (value === "") return false;
-  const options = CHECKBOX_OPTIONS[field] as readonly string[];
-  return !options.includes(value);
+function badSelect(value: string, field: SingleSelectField): boolean {
+  return value !== "" && !(CHECKBOX_OPTIONS[field] as readonly string[]).includes(value);
 }
 
-function validateCampusInteres(value: CampusInteresOption[]): boolean {
-  if (value.length === 0) return false;
-  const valid = CAMPUS_INTERES_OPTIONS as readonly string[];
-  return value.some((v) => !valid.includes(v));
+function badCampus(value: CampusInteresOption[]): boolean {
+  return value.some((v) => !(CAMPUS_INTERES_OPTIONS as readonly string[]).includes(v));
 }
 
 export function validarFicha(datos: FichaData): {
@@ -173,20 +184,14 @@ export function validarFicha(datos: FichaData): {
   b.promedioNotas = nota.flagged;
   if (!nota.flagged) d.promedioNotas = nota.normalized;
 
-  b.nombre = isBlank(d.nombre);
-  b.apellidoPaterno = isBlank(d.apellidoPaterno);
-  b.apellidoMaterno = isBlank(d.apellidoMaterno);
-
-  b.establecimiento = false;
-  b.ciudad = false;
-  b.carrera1 = false;
-  b.carrera2 = false;
-  b.carrera3 = false;
-
-  b.curso = validateSingleSelect(d.curso, "curso");
-  b.usmEsAlternativa = validateSingleSelect(d.usmEsAlternativa, "usmEsAlternativa");
-  b.campusInteres = validateCampusInteres(d.campusInteres);
-  b.conocerViasAdmision = validateSingleSelect(d.conocerViasAdmision, "conocerViasAdmision");
+  b.nombre = d.nombre.trim() === "";
+  b.apellidoPaterno = d.apellidoPaterno.trim() === "";
+  b.apellidoMaterno = d.apellidoMaterno.trim() === "";
+  b.establecimiento = b.ciudad = b.carrera1 = b.carrera2 = b.carrera3 = false;
+  b.curso = badSelect(d.curso, "curso");
+  b.usmEsAlternativa = badSelect(d.usmEsAlternativa, "usmEsAlternativa");
+  b.campusInteres = badCampus(d.campusInteres);
+  b.conocerViasAdmision = badSelect(d.conocerViasAdmision, "conocerViasAdmision");
 
   return { datos: d, banderas: b };
 }

@@ -11,8 +11,8 @@ import {
   type CampusInteresOption,
   type FichaData,
 } from "./fields";
-import { extractWithBedrock } from "./vision-bedrock";
-import { extractWithGemini } from "./vision-gemini";
+import { extractWithBedrock, rereadFieldWithBedrock } from "./vision-bedrock";
+import { extractWithGemini, rereadFieldWithGemini } from "./vision-gemini";
 import type { CropImages, RawFicha } from "./vision-types";
 
 type Provider = "gemini" | "bedrock";
@@ -37,6 +37,17 @@ export async function extractFichaData(
       ? await extractWithGemini(imageBytes, mimeType, crops)
       : await extractWithBedrock(imageBytes, mimeType, crops);
   return sanitize(raw);
+}
+
+export async function rereadField(
+  cropBytes: ArrayBuffer,
+  mimeType: string,
+  fieldName: string,
+): Promise<string> {
+  const provider = selectProvider();
+  return provider === "gemini"
+    ? rereadFieldWithGemini(cropBytes, mimeType, fieldName)
+    : rereadFieldWithBedrock(cropBytes, mimeType, fieldName);
 }
 
 // ---------------------------------------------------------------------------

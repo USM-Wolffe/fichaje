@@ -2,7 +2,7 @@
 // lib/vision.ts antes del refactor: endpoint generativelanguage,
 // auth via ?key=, JSON forzado con responseMimeType.
 
-import { EXTRACTION_PROMPT } from "./vision-prompt";
+import { EXTRACTION_PROMPT, rereadPrompt } from "./vision-prompt";
 import type { CropImages, RawFicha } from "./vision-types";
 
 // Probar a "gemini-2.5-pro" si Flash empieza a fallar mucho sobre imágenes
@@ -93,9 +93,41 @@ async function callGemini(
   }
 }
 
-// Convierte un objeto desconocido a RawFicha rellenando los campos
-// faltantes con sus defaults. No hace sanitizado fino — eso es trabajo
-// del orquestador.
+export async function rereadFieldWithGemini(
+  cropBytes: ArrayBuffer,
+  mimeType: string,
+  fieldName: string,
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Falta GEMINI_API_KEY en el entorno del servidor.");
+  const body = {
+    contents: [{
+      parts: [
+        { text: rereadPrompt(fieldName) },
+        { inline_data: { mime_type: mimeType, data: Buffer.from(cropBytes).toString("base64") } },
+      ],
+    }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+  };
+  const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Gemini reread respondió ${res.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as GeminiResponse;
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "string" ? parsed : text.replace(/^"|"$/g, "").trim();
+  } catch {
+    return text.replace(/^"|"$/g, "").trim();
+  }
+}
+
 function ensureRawFicha(raw: unknown): RawFicha {
   if (typeof raw !== "object" || raw === null) {
     throw new Error("El modelo devolvió un formato inesperado.");
