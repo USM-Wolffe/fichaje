@@ -10,7 +10,7 @@ export type CropFieldKey = "rut" | "celular" | "correo";
 export const CROP_REGIONS: Record<CropFieldKey, CropRegion> = {
   rut: { x: 5.2, y: 44.6, w: 20.5, h: 5.6 },
   celular: { x: 30.7, y: 67.4, w: 17.9, h: 5.6 },
-  correo: { x: 5.0, y: 53.6, w: 44.0, h: 9.8 },
+  correo: { x: 9.4, y: 53.6, w: 35.2, h: 9.8 },
 };
 
 const CROP_KEYS = Object.keys(CROP_REGIONS) as CropFieldKey[];
