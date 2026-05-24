@@ -34,7 +34,7 @@ function inflateRegion(r: CropRegion): CropRegion {
 }
 
 function enhanceContrast(
-  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+  ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
 ): void {
@@ -73,27 +73,17 @@ function enhanceContrast(
   ctx.putImageData(imageData, 0, 0);
 }
 
-function createCanvas(
-  width: number,
-  height: number,
-): OffscreenCanvas | HTMLCanvasElement {
-  if (typeof OffscreenCanvas !== "undefined") {
-    return new OffscreenCanvas(width, height);
-  }
+function createCanvas(width: number, height: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = width;
   c.height = height;
   return c;
 }
 
-function getContext(
-  canvas: OffscreenCanvas | HTMLCanvasElement,
-): OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D {
+function getContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
   const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    throw new Error("No se pudo obtener el contexto 2D del canvas.");
-  }
-  return ctx as OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
+  if (!ctx) throw new Error("No se pudo obtener el contexto 2D del canvas.");
+  return ctx;
 }
 
 async function loadImage(blob: Blob): Promise<HTMLImageElement> {
@@ -127,14 +117,11 @@ async function cropRegion(
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
   enhanceContrast(ctx, sw, sh);
 
-  if (canvas instanceof OffscreenCanvas) {
-    return await canvas.convertToBlob({ type: "image/png" });
-  }
   return await new Promise<Blob>((resolve, reject) => {
-    (canvas as HTMLCanvasElement).toBlob((b) => {
-      if (b) resolve(b);
-      else reject(new Error("No se pudo exportar el recorte como imagen."));
-    }, "image/png");
+    canvas.toBlob(
+      (b) => b ? resolve(b) : reject(new Error("No se pudo exportar el recorte como imagen.")),
+      "image/png",
+    );
   });
 }
 
