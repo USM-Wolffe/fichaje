@@ -25,7 +25,7 @@ function inflateRegion(r: CropRegion): CropRegion {
   let x = r.x - mx;
   let y = r.y - my;
   let w = r.w + 2 * mx;
-  let h = r.h + 2 * my;
+  let h = r.h + 2 * my + r.h * 0.10;
   x = Math.max(0, x);
   y = Math.max(0, y);
   w = Math.min(w, 100 - x);
