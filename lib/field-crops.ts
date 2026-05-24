@@ -15,6 +15,64 @@ export const CROP_REGIONS: Record<CropFieldKey, CropRegion> = {
 
 const CROP_KEYS = Object.keys(CROP_REGIONS) as CropFieldKey[];
 
+const MARGIN_FACTOR = 0.15;
+const PERCENTILE_LOW = 3;
+const PERCENTILE_HIGH = 97;
+
+function inflateRegion(r: CropRegion): CropRegion {
+  const mx = r.w * MARGIN_FACTOR;
+  const my = r.h * MARGIN_FACTOR;
+  let x = r.x - mx;
+  let y = r.y - my;
+  let w = r.w + 2 * mx;
+  let h = r.h + 2 * my;
+  x = Math.max(0, x);
+  y = Math.max(0, y);
+  w = Math.min(w, 100 - x);
+  h = Math.min(h, 100 - y);
+  return { x, y, w, h };
+}
+
+function enhanceContrast(
+  ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const d = imageData.data;
+  const totalPixels = width * height;
+
+  const histogram = new Uint32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = Math.round(0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!);
+    d[i] = gray;
+    d[i + 1] = gray;
+    d[i + 2] = gray;
+    histogram[gray]!++;
+  }
+
+  const lowThreshold = Math.floor((PERCENTILE_LOW / 100) * totalPixels);
+  const highThreshold = Math.floor((PERCENTILE_HIGH / 100) * totalPixels);
+  let cumulative = 0;
+  let pLow = 0;
+  let pHigh = 255;
+  for (let v = 0; v < 256; v++) {
+    cumulative += histogram[v]!;
+    if (cumulative <= lowThreshold) pLow = v;
+    if (cumulative < highThreshold) pHigh = v;
+  }
+
+  const range = pHigh - pLow || 1;
+  for (let i = 0; i < d.length; i += 4) {
+    const stretched = Math.round(Math.min(255, Math.max(0, ((d[i]! - pLow) / range) * 255)));
+    d[i] = stretched;
+    d[i + 1] = stretched;
+    d[i + 2] = stretched;
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
 function createCanvas(
   width: number,
   height: number,
@@ -58,14 +116,16 @@ async function cropRegion(
   img: HTMLImageElement,
   region: CropRegion,
 ): Promise<Blob> {
-  const sx = Math.round((region.x / 100) * img.naturalWidth);
-  const sy = Math.round((region.y / 100) * img.naturalHeight);
-  const sw = Math.round((region.w / 100) * img.naturalWidth);
-  const sh = Math.round((region.h / 100) * img.naturalHeight);
+  const inflated = inflateRegion(region);
+  const sx = Math.round((inflated.x / 100) * img.naturalWidth);
+  const sy = Math.round((inflated.y / 100) * img.naturalHeight);
+  const sw = Math.round((inflated.w / 100) * img.naturalWidth);
+  const sh = Math.round((inflated.h / 100) * img.naturalHeight);
 
   const canvas = createCanvas(sw, sh);
   const ctx = getContext(canvas);
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  enhanceContrast(ctx, sw, sh);
 
   if (canvas instanceof OffscreenCanvas) {
     return await canvas.convertToBlob({ type: "image/png" });
