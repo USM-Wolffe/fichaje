@@ -1,12 +1,7 @@
 "use client";
 
-// Orquestador de la cola de procesamiento. NO contiene lógica de negocio:
-// se suscribe al store de lib/processing.ts, lee el conteo de pendientes
-// desde lib/db.ts y delega los disparadores a processAll(). Cualquier
-// cambio en cómo se procesa una ficha vive en lib/processing.ts.
-
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { listFichasByEstado } from "@/lib/db";
+import { clearFichas, listFichasByEstado } from "@/lib/db";
 import {
   getProgress,
   processAll,
@@ -25,20 +20,24 @@ export default function BatchActions() {
   );
   const [procesadasCount, setProcesadasCount] = useState<number | null>(null);
   const [exportadasCount, setExportadasCount] = useState<number | null>(null);
+  const [conErrorCount, setConErrorCount] = useState<number | null>(null);
   const [exportando, setExportando] = useState(false);
   const [errorExport, setErrorExport] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [borrando, setBorrando] = useState(false);
 
   const refrescarConteos = useCallback(async () => {
     try {
-      const [capturadas, procesadas, exportadas] = await Promise.all([
+      const [capturadas, procesadas, exportadas, conError] = await Promise.all([
         listFichasByEstado("capturada"),
         listFichasByEstado("procesada"),
         listFichasByEstado("exportada"),
+        listFichasByEstado("error"),
       ]);
       setPendientesIniciales(capturadas.length);
       setProcesadasCount(procesadas.length);
       setExportadasCount(exportadas.length);
+      setConErrorCount(conError.length);
       setErrorMsg("");
     } catch (e) {
       setErrorMsg(
@@ -71,6 +70,33 @@ export default function BatchActions() {
     }
   }, [refrescarConteos]);
 
+  const handleBorrarTodas = useCallback(async () => {
+    const total =
+      (pendientesIniciales ?? 0) +
+      (procesadasCount ?? 0) +
+      (exportadasCount ?? 0) +
+      (conErrorCount ?? 0);
+    if (total === 0) return;
+    const sinExportar = total - (exportadasCount ?? 0);
+    const mensaje =
+      sinExportar > 0
+        ? `Vas a borrar ${total} fichas. ${sinExportar} todavía no se han exportado. ¿Continuar?`
+        : `Vas a borrar ${total} fichas. ¿Continuar?`;
+    if (!window.confirm(mensaje)) return;
+    setBorrando(true);
+    try {
+      await clearFichas();
+      await refrescarConteos();
+      document.dispatchEvent(new Event("fichas-cleared"));
+    } catch (e) {
+      setErrorMsg(
+        e instanceof Error ? e.message : "No se pudieron borrar las fichas.",
+      );
+    } finally {
+      setBorrando(false);
+    }
+  }, [pendientesIniciales, procesadasCount, exportadasCount, conErrorCount, refrescarConteos]);
+
   if (errorMsg) {
     return (
       <div className="rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-800">
@@ -82,23 +108,13 @@ export default function BatchActions() {
   const corriendo = progress.estado === "corriendo";
   const totalCorrida = progress.procesadas + progress.pendientes + progress.conError;
   const completados = progress.procesadas + progress.conError;
-  const porcentaje =
-    corriendo && totalCorrida > 0
-      ? Math.round((completados / totalCorrida) * 100)
-      : progress.estado === "terminada"
-        ? 100
-        : 0;
-  const pendientesParaBoton = corriendo
-    ? progress.pendientes
-    : (pendientesIniciales ?? 0);
-  const procesarDisabled = corriendo || pendientesParaBoton === 0;
-  const reintentarVisible = progress.conError > 0;
-  const reintentarDisabled = corriendo;
-  const exportarDisabled =
-    exportando || corriendo || (procesadasCount ?? 0) === 0;
-  const reexportarVisible = (exportadasCount ?? 0) > 0;
-  const reexportarDisabled = exportando || corriendo;
+  const porcentaje = corriendo && totalCorrida > 0
+    ? Math.round((completados / totalCorrida) * 100)
+    : progress.estado === "terminada" ? 100 : 0;
+  const pendientesParaBoton = corriendo ? progress.pendientes : (pendientesIniciales ?? 0);
+  const exportarDisabled = exportando || corriendo || (procesadasCount ?? 0) === 0;
   const totalReexportar = (procesadasCount ?? 0) + (exportadasCount ?? 0);
+  const totalFichas = (pendientesIniciales ?? 0) + (procesadasCount ?? 0) + (exportadasCount ?? 0) + (conErrorCount ?? 0);
 
   return (
     <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -106,17 +122,17 @@ export default function BatchActions() {
         <button
           type="button"
           onClick={() => void processAll()}
-          disabled={procesarDisabled}
+          disabled={corriendo || pendientesParaBoton === 0}
           className="flex-1 rounded-md bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
         >
           Procesar todo ({pendientesParaBoton} pendiente
           {pendientesParaBoton === 1 ? "" : "s"})
         </button>
-        {reintentarVisible && (
+        {progress.conError > 0 && (
           <button
             type="button"
             onClick={() => void processAll({ modo: "reintentar-errores" })}
-            disabled={reintentarDisabled}
+            disabled={corriendo}
             className="rounded-md border border-rose-300 bg-white px-3 py-3 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reintentar errores ({progress.conError})
@@ -132,14 +148,24 @@ export default function BatchActions() {
             ? "Exportando…"
             : `Exportar Excel + imágenes (${procesadasCount ?? 0})`}
         </button>
-        {reexportarVisible && (
+        {(exportadasCount ?? 0) > 0 && (
           <button
             type="button"
             onClick={() => void handleExportar("todas")}
-            disabled={reexportarDisabled}
+            disabled={exportando || corriendo}
             className="rounded-md border border-slate-300 bg-white px-3 py-3 text-xs font-medium text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Re-exportar todas ({totalReexportar})
+          </button>
+        )}
+        {totalFichas > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleBorrarTodas()}
+            disabled={corriendo || borrando}
+            className="rounded-md border border-rose-300 bg-white px-3 py-3 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {borrando ? "Borrando…" : "Borrar todas"}
           </button>
         )}
       </div>
@@ -153,31 +179,15 @@ export default function BatchActions() {
       {(corriendo || progress.estado === "terminada") && (
         <div className="space-y-2">
           <div className="flex justify-between text-xs text-slate-600">
-            <span>
-              <strong className="text-emerald-700">{progress.procesadas}</strong>{" "}
-              procesadas
-            </span>
-            <span>
-              <strong className="text-slate-900">{progress.pendientes}</strong>{" "}
-              pendientes
-            </span>
-            <span>
-              <strong className="text-rose-700">{progress.conError}</strong>{" "}
-              con error
-            </span>
+            <span><strong className="text-emerald-700">{progress.procesadas}</strong> procesadas</span>
+            <span><strong className="text-slate-900">{progress.pendientes}</strong> pendientes</span>
+            <span><strong className="text-rose-700">{progress.conError}</strong> con error</span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
-            <div
-              className="h-full bg-slate-900 transition-[width] duration-200"
-              style={{ width: `${porcentaje}%` }}
-            />
+            <div className="h-full bg-slate-900 transition-[width] duration-200" style={{ width: `${porcentaje}%` }} />
           </div>
           <div className="text-xs text-slate-500">
-            {corriendo && progress.actual
-              ? `Procesando ficha #${progress.actual.id}…`
-              : progress.estado === "terminada"
-                ? "Procesamiento terminado."
-                : ""}
+            {corriendo && progress.actual ? `Procesando ficha #${progress.actual.id}…` : progress.estado === "terminada" ? "Procesamiento terminado." : ""}
           </div>
         </div>
       )}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listFichas, type FichaRecord } from "@/lib/db";
 import { getProgress, subscribe, type Progress } from "@/lib/processing";
 import FichaListItem from "./FichaListItem";
+import StatusSummary from "./StatusSummary";
 
 type FichaConThumb = FichaRecord & { thumbUrl: string };
 
@@ -11,8 +12,9 @@ export default function FichaList() {
   const [fichas, setFichas] = useState<FichaConThumb[] | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [progress, setProgress] = useState<Progress>(getProgress);
-  // Guardamos las URLs de la carga anterior para revocarlas cuando llega una
-  // nueva carga: si no, cada refresh deja blobs huérfanos en memoria.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [exportando, setExportando] = useState(false);
+  const [errorExport, setErrorExport] = useState("");
   const urlsRef = useRef<string[]>([]);
 
   const cargar = useCallback(async () => {
@@ -30,6 +32,7 @@ export default function FichaList() {
       urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       urlsRef.current = nuevasUrls;
       setFichas(conThumb);
+      setSelected(new Set());
       setErrorMsg("");
     } catch (e) {
       setErrorMsg(
@@ -40,25 +43,22 @@ export default function FichaList() {
 
   useEffect(() => {
     void cargar();
-    // Cuando el usuario vuelve desde /escanear, el router de Next.js puede
-    // reutilizar esta pantalla cacheada. Recargamos al volver a ser visibles
-    // para que las fichas recién capturadas aparezcan sin recargar a mano.
     function onVisible() {
       if (document.visibilityState === "visible") void cargar();
     }
+    function onCleared() {
+      void cargar();
+    }
     document.addEventListener("visibilitychange", onVisible);
+    document.addEventListener("fichas-cleared", onCleared);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("fichas-cleared", onCleared);
       urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       urlsRef.current = [];
     };
   }, [cargar]);
 
-  // Suscripción al progreso de la cola: cuando una corrida termina, refrescamos
-  // la lista para reflejar los cambios (procesada/error). Durante la corrida
-  // mantenemos el id de la ficha actual para que el badge muestre "Procesando…".
-  // Usamos un ref para conocer el estado previo sin re-suscribirnos en cada
-  // emisión (re-suscribir podría perder eventos del store).
   const estadoPrevioRef = useRef<Progress["estado"]>(getProgress().estado);
   useEffect(() => {
     const unsub = subscribe((p) => {
@@ -71,6 +71,33 @@ export default function FichaList() {
     });
     return unsub;
   }, [cargar]);
+
+  const toggleSelect = useCallback((id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleExportarSeleccion = useCallback(async () => {
+    if (selected.size === 0) return;
+    setExportando(true);
+    setErrorExport("");
+    try {
+      const { exportarZipByIds } = await import("@/lib/export");
+      await exportarZipByIds([...selected]);
+      setSelected(new Set());
+      await cargar();
+    } catch (e) {
+      setErrorExport(
+        e instanceof Error ? e.message : "No se pudo exportar la selección.",
+      );
+    } finally {
+      setExportando(false);
+    }
+  }, [selected, cargar]);
 
   if (errorMsg) {
     return (
@@ -107,17 +134,52 @@ export default function FichaList() {
   const swipeDeshabilitado = progress.estado === "corriendo";
 
   return (
-    <ul className="divide-y divide-slate-200 border-t border-slate-200">
-      {fichas.map((f) => (
-        <FichaListItem
-          key={f.id}
-          ficha={f}
-          thumbUrl={f.thumbUrl}
-          procesandoEsta={procesandoId === f.id}
-          swipeDeshabilitado={swipeDeshabilitado}
-          onEliminada={() => void cargar()}
-        />
-      ))}
-    </ul>
+    <div>
+      <StatusSummary fichas={fichas} />
+      {selected.size > 0 && (
+        <div className="mx-4 mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleExportarSeleccion()}
+            disabled={exportando}
+            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {exportando
+              ? "Exportando…"
+              : `Exportar selección (${selected.size})`}
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
+          >
+            Deseleccionar
+          </button>
+        </div>
+      )}
+      {errorExport && (
+        <div className="mx-4 mt-2 rounded-md bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {errorExport}
+        </div>
+      )}
+      <ul className="mt-2 divide-y divide-slate-200 border-t border-slate-200">
+        {fichas.map((f) => {
+          const exportable =
+            f.estado === "procesada" || f.estado === "exportada";
+          return (
+            <FichaListItem
+              key={f.id}
+              ficha={f}
+              thumbUrl={f.thumbUrl}
+              procesandoEsta={procesandoId === f.id}
+              swipeDeshabilitado={swipeDeshabilitado}
+              onEliminada={() => void cargar()}
+              selected={exportable ? selected.has(f.id!) : false}
+              onToggleSelect={exportable ? toggleSelect : null}
+            />
+          );
+        })}
+      </ul>
+    </div>
   );
 }

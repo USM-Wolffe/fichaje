@@ -40,6 +40,8 @@ interface Props {
   procesandoEsta: boolean;
   swipeDeshabilitado: boolean;
   onEliminada: () => void;
+  selected: boolean;
+  onToggleSelect: ((id: number) => void) | null;
 }
 
 export default function FichaListItem({
@@ -48,6 +50,8 @@ export default function FichaListItem({
   procesandoEsta,
   swipeDeshabilitado,
   onEliminada,
+  selected,
+  onToggleSelect,
 }: Props) {
   const [mostrarDatos, setMostrarDatos] = useState(false);
   const [errorEliminar, setErrorEliminar] = useState<string>("");
@@ -79,28 +83,41 @@ export default function FichaListItem({
     }
   }
 
+  const showCheckbox = onToggleSelect !== null;
+
   return (
     <li ref={liRef} className="bg-white">
-      <div className="relative overflow-hidden">
-        <div className="absolute inset-y-0 right-0 flex items-stretch">
-          <button
-            type="button"
-            onClick={() => void confirmarEliminar()}
-            disabled={swipeOff}
-            className="w-24 bg-rose-600 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+      <div className="flex">
+        {showCheckbox && (
+          <label className="flex flex-shrink-0 items-center justify-center px-3">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={() => ficha.id !== undefined && onToggleSelect(ficha.id)}
+              className="h-5 w-5 rounded border-slate-300 text-slate-900 accent-slate-900"
+            />
+          </label>
+        )}
+        <div className="relative min-w-0 flex-1 overflow-hidden">
+          <div className="absolute inset-y-0 right-0 flex items-stretch">
+            <button
+              type="button"
+              onClick={() => void confirmarEliminar()}
+              disabled={swipeOff}
+              className="w-24 bg-rose-600 text-sm font-semibold text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Eliminar
+            </button>
+          </div>
+          <div
+            {...swipe.bindings}
+            style={{
+              transform: `translateX(${swipe.dx}px)`,
+              transition: swipe.arrastrando ? "none" : "transform 180ms ease-out",
+              touchAction: "pan-y",
+            }}
+            className="flex items-center gap-3 bg-white px-4 py-3"
           >
-            Eliminar
-          </button>
-        </div>
-        <div
-          {...swipe.bindings}
-          style={{
-            transform: `translateX(${swipe.dx}px)`,
-            transition: swipe.arrastrando ? "none" : "transform 180ms ease-out",
-            touchAction: "pan-y",
-          }}
-          className="flex items-center gap-3 bg-white px-4 py-3"
-        >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={thumbUrl}
@@ -147,6 +164,7 @@ export default function FichaListItem({
             </button>
           )}
         </div>
+          </div>
         </div>
       </div>
       {mostrarDatos && ficha.datos && <FichaDataView datos={ficha.datos} />}

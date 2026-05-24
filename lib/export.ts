@@ -5,7 +5,7 @@
 
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { listFichasByEstado, updateFicha, type FichaRecord } from "./db";
+import { getFicha, listFichasByEstado, updateFicha, type FichaRecord } from "./db";
 import {
   ALL_FIELDS,
   CHECKBOX_FIELDS,
@@ -115,6 +115,23 @@ function dispararDescarga(blob: Blob, nombre: string): void {
 
 export type ExportMode = "nuevas" | "todas";
 
+async function generarYDescargar(
+  fichas: FichaRecord[],
+  marcarExportadas: boolean,
+): Promise<void> {
+  if (fichas.length === 0) return;
+  const workbook = construirWorkbook(fichas);
+  const blob = await construirZipBlob(workbook, fichas);
+  dispararDescarga(blob, nombreZipParaHoy());
+  if (marcarExportadas) {
+    for (const f of fichas) {
+      if (f.id !== undefined && f.estado === "procesada") {
+        await updateFicha(f.id, { estado: "exportada" });
+      }
+    }
+  }
+}
+
 export async function exportarZip(
   opts?: { modo?: ExportMode },
 ): Promise<void> {
@@ -127,17 +144,23 @@ export async function exportarZip(
             ...(await listFichasByEstado("exportada")),
           ]
         : await listFichasByEstado("procesada");
-    if (fichas.length === 0) return;
-    const workbook = construirWorkbook(fichas);
-    const blob = await construirZipBlob(workbook, fichas);
-    dispararDescarga(blob, nombreZipParaHoy());
-    if (modo === "nuevas") {
-      for (const f of fichas) {
-        if (f.id !== undefined) {
-          await updateFicha(f.id, { estado: "exportada" });
-        }
+    await generarYDescargar(fichas, modo === "nuevas");
+  } catch (e) {
+    const detalle = e instanceof Error ? e.message : String(e);
+    throw new Error(`No se pudo generar el .zip de exportación: ${detalle}`);
+  }
+}
+
+export async function exportarZipByIds(ids: number[]): Promise<void> {
+  try {
+    const fichas: FichaRecord[] = [];
+    for (const id of ids) {
+      const ficha = await getFicha(id);
+      if (ficha && (ficha.estado === "procesada" || ficha.estado === "exportada")) {
+        fichas.push(ficha);
       }
     }
+    await generarYDescargar(fichas, true);
   } catch (e) {
     const detalle = e instanceof Error ? e.message : String(e);
     throw new Error(`No se pudo generar el .zip de exportación: ${detalle}`);
